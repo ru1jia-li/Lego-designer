@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 55.29 55.3">
+  <defs>
+    <style>
+      .cls-1, .cls-2, .cls-3 {
+        fill: none;
+      }
+
+      .cls-1, .cls-4 {
+        stroke: #010101;
+        stroke-width: .54px;
+      }
+
+      .cls-2 {
+        stroke-width: 1.08px;
+      }
+
+      .cls-2, .cls-3 {
+        stroke: #000;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .cls-3 {
+        stroke-width: 1.44px;
+      }
+
+      .cls-4 {
+        fill: #c5d2db;
+      }
+
+      .cls-5 {
+        fill: #bdbec0;
+      }
+    </style>
+  </defs>
+  <g id="Optical_elements" data-name="Optical elements">
+    <g id="Cube_0.5_" data-name="Cube 0.5&amp;apos;&amp;apos;">
+      <g>
+        <g>
+          <polygon class="cls-5" points="54.57 45.66 54.57 48.9 48.9 54.58 6.39 54.58 .72 48.9 .72 6.39 6.39 .72 9.63 .72 9.63 9.64 54.57 9.64 54.57 19.54 45.66 19.54 45.66 45.66 54.57 45.66"/>
+          <rect class="cls-5" x="45.66" y="19.54" width="8.91" height="26.12"/>
+          <polygon class="cls-5" points="54.57 6.39 54.57 9.64 9.63 9.64 9.63 .72 48.9 .72 54.57 6.39"/>
+        </g>
+        <g>
+          <line class="cls-3" x1="48.9" y1=".72" x2="54.57" y2="6.39"/>
+          <line class="cls-3" x1="54.57" y1="48.9" x2="48.9" y2="54.58"/>
+          <line class="cls-3" x1=".72" y1="6.39" x2="6.39" y2=".72"/>
+          <line class="cls-3" x1="6.39" y1="54.58" x2=".72" y2="48.9"/>
+          <polyline class="cls-3" points="48.9 .72 9.63 .72 9.63 9.64 54.57 9.64 54.57 6.39"/>
+          <polyline class="cls-3" points="54.57 19.54 45.66 19.54 45.66 45.66 54.57 45.66 54.57 19.54"/>
+          <line class="cls-3" x1="6.39" y1=".72" x2="9.63" y2=".72"/>
+          <line class="cls-3" x1="48.9" y1="54.58" x2="6.39" y2="54.58"/>
+          <line class="cls-3" x1="54.57" y1="45.66" x2="54.57" y2="48.9"/>
+          <line class="cls-3" x1="54.57" y1="9.64" x2="54.57" y2="19.54"/>
+          <line class="cls-3" x1=".72" y1="48.9" x2=".72" y2="6.39"/>
+          <polyline class="cls-2" points="27.65 26.2 28.16 26.29 28.5 26.49"/>
+          <polyline class="cls-2" points="28.81 26.8 28.89 26.91 29.06 27.39 29.06 27.9 28.89 28.39 28.81 28.5"/>
+          <polyline class="cls-2" points="28.5 28.81 28.16 29.01 27.65 29.09 27.16 29.01 26.8 28.81"/>
+          <polyline class="cls-2" points="26.48 28.5 26.4 28.39 26.23 27.9 26.23 27.39 26.4 26.91 26.48 26.8"/>
+          <polyline class="cls-2" points="26.8 26.49 27.16 26.29 27.65 26.2"/>
+        </g>
+      </g>
+      <g>
+        <rect class="cls-4" x="9.65" y="9.65" width="36" height="36"/>
+        <line class="cls-1" x1="9.65" y1="9.65" x2="45.65" y2="45.65"/>
+      </g>
+    </g>
+  </g>
+</svg>
