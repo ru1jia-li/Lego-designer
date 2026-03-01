@@ -20,3 +20,9 @@ Thumbs.db
 
 # Project
 *.log
+
+# Exclude from repo (keep on disk)
+OldVersions/
+# Root-level export/sample SVGs (keep breadboard.svg)
+/*.svg
+!breadboard.svg
