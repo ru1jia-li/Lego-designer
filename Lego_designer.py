@@ -10,19 +10,19 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QHBoxLayout,
     QFrame, QScrollArea, QLabel, QFileDialog, QCheckBox, QMessageBox,
     QGridLayout, QGraphicsScene, QColorDialog, QLineEdit, QToolTip, QSlider,
-    QTreeWidget, QTreeWidgetItem, QAbstractItemView, QInputDialog, QMenu, QSizePolicy, QSplitter
+    QTreeWidget, QTreeWidgetItem, QAbstractItemView, QInputDialog, QMenu, QSizePolicy, QSplitter,
+    QSpinBox,
 )
 from PyQt6.QtCore import Qt, QPointF, QRectF, QTimer, QLineF, QEvent, QSize
-from PyQt6.QtGui import QColor, QPen, QPixmap, QPainter, QFont, QIcon, QPolygonF, QTransform
+from PyQt6.QtGui import QColor, QPen, QPixmap, QPainter, QFont, QIcon, QPolygonF, QTransform, QTextCharFormat
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtSvgWidgets import QGraphicsSvgItem
 
-from elements import DraggableElement, LaserPath
+from elements import DraggableElement, LaserPath, CanvasTextItem
 from view import CustomGraphicsView
 from dialogs import CollapsibleCategory
 from holes import HoleManagerDialog
 from canvas import CanvasState, CanvasNode, LAYER, GROUP, ITEM
-
 
 class LayersTreeWidget(QTreeWidget):
     """QTreeWidget subclass that intercepts drag-drop to reorder the CanvasState tree."""
@@ -116,8 +116,9 @@ class LegoDesigner(QMainWindow):
         self._canvas_rotation = 0  # current canvas rotation in degrees
 
         # Hierarchical layer tree (mirrors the flat QGraphicsScene)
-        # "Laser Paths" sits above "Elements" — laser layer is index 0 (top).
+        # Text is always on top (index 0), then Laser Paths, then Elements.
         self.canvas_state = CanvasState()
+        self.canvas_state.add_layer("Text")
         self.canvas_state.add_layer("Laser Paths")
         self.canvas_state.add_layer("Elements")
         self._active_layer_name = "Elements"
@@ -169,13 +170,15 @@ class LegoDesigner(QMainWindow):
         sidebar.setFixedWidth(280)
         sidebar.setStyleSheet("background: #E0E0E0; border-right: 1px solid #AAA;")
         side_layout = QVBoxLayout(sidebar)
+        self._side_layout = side_layout
         side_layout.setContentsMargins(8, 8, 8, 8)
         side_layout.setSpacing(6)
 
         # --- Inventory panel (header inside same box) ---
         self._inventory_content = QFrame()
+        self._inventory_content.setMinimumWidth(260)
         self._inventory_content.setStyleSheet(
-            "background: #FFFFFF; border: 1px solid #CCC; border-radius: 6px;"
+            "background: #FFFFFF; border: none; border-radius: 6px;"
         )
         inv_layout = QVBoxLayout(self._inventory_content)
         inv_layout.setContentsMargins(8, 8, 8, 8)
@@ -184,9 +187,21 @@ class LegoDesigner(QMainWindow):
         self._btn_inventory_toggle = QPushButton("▾ Inventory")
         self._btn_inventory_toggle.setCheckable(True)
         self._btn_inventory_toggle.setChecked(True)
+        self._btn_inventory_toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._btn_inventory_toggle.setStyleSheet(
-            "text-align: left; font-weight: bold; font-size: 14pt; "
-            "background: transparent; border: none; padding: 4px 2px;"
+            """
+            QPushButton {
+                text-align: left;
+                font-weight: bold;
+                font-size: 12pt;
+                background: transparent;
+                border: none;
+                height: 22px;
+                padding-top: 0px;
+                padding-bottom: 4px;
+                padding-left: 8px;
+            }
+            """
         )
         inv_layout.addWidget(self._btn_inventory_toggle)
 
@@ -230,7 +245,25 @@ class LegoDesigner(QMainWindow):
         self._left_splitter.setStretchFactor(0, 1)
         self._left_splitter.setStretchFactor(1, 1)
         side_layout.addWidget(self._left_splitter, 1)
+        side_layout.addStretch(1)
         self._left_splitter_ratio_applied = False
+
+        def _update_splitter_stretch():
+            """When both collapsed: splitter at top (stretch 0). When either expanded: splitter fills (stretch 1)."""
+            if not hasattr(self, "_left_splitter") or not hasattr(self, "_side_layout"):
+                return
+            # Use button state, not body visibility: isVisible() can be False before window is shown
+            inv_expanded = self._btn_inventory_toggle.isChecked()
+            layers_expanded = self._btn_layers_toggle.isChecked() if hasattr(self, "_btn_layers_toggle") else False
+            both_collapsed = not inv_expanded and not layers_expanded
+            # splitter is index 0, stretch is index 1 in side_layout
+            if both_collapsed:
+                self._side_layout.setStretch(0, 0)
+                self._side_layout.setStretch(1, 1)
+            else:
+                self._side_layout.setStretch(0, 1)
+                self._side_layout.setStretch(1, 0)
+        self._update_splitter_stretch = _update_splitter_stretch
 
         def _toggle_inventory(opened: bool):
             """Show/hide inventory body and adjust splitter so only header remains when closed."""
@@ -245,6 +278,7 @@ class LegoDesigner(QMainWindow):
                 self._inventory_content.setSizePolicy(QSizePolicy.Policy.Preferred,
                                                       QSizePolicy.Policy.Expanding)
                 self._inventory_content.setMaximumHeight(16777215)
+                self._left_splitter.setMaximumHeight(16777215)
                 # Back to roughly 50/50
                 self._left_splitter.setSizes([1000, 1000])
             else:
@@ -253,7 +287,16 @@ class LegoDesigner(QMainWindow):
                 self._inventory_content.setSizePolicy(QSizePolicy.Policy.Preferred,
                                                       QSizePolicy.Policy.Fixed)
                 self._inventory_content.setMaximumHeight(header_h)
-                self._left_splitter.setSizes([header_h, 3000])
+                # When both collapsed, keep splitter at top by limiting its height
+                layers_collapsed = not self._layers_body.isVisible()
+                if layers_collapsed:
+                    layers_header_h = self._btn_layers_toggle.sizeHint().height() + 12
+                    self._left_splitter.setMaximumHeight(header_h + layers_header_h)
+                    self._left_splitter.setSizes([header_h, layers_header_h])
+                else:
+                    self._left_splitter.setMaximumHeight(16777215)
+                    self._left_splitter.setSizes([header_h, 1000])
+            self._update_splitter_stretch()
 
         self._btn_inventory_toggle.toggled.connect(_toggle_inventory)
 
@@ -322,7 +365,19 @@ class LegoDesigner(QMainWindow):
         self.btn_eraser.clicked.connect(self.toggle_eraser)
         tl.addWidget(self.btn_eraser)
 
-        # Hole manager
+        self.btn_text = QPushButton("𝐓")
+        self.btn_text.setObjectName("ToolBtn")
+        self.btn_text.setFixedSize(50, 32)
+        self.btn_text.setIconSize(QSize(22, 22))
+        self.btn_text.setToolTip("Add Text Box")
+        self.btn_text.setToolTipDuration(0)
+        self.btn_text.installEventFilter(self)
+        self.btn_text.clicked.connect(self.add_textbox)
+        tl.addWidget(self.btn_text)
+
+        tl.addStretch()
+
+        # Hole manager (rightmost on ribbon)
         self.btn_review = QPushButton("🔍 Review Holes")
         self.btn_review.setObjectName("ToolBtn")
         self.btn_review.setFixedSize(140, 32)
@@ -331,8 +386,6 @@ class LegoDesigner(QMainWindow):
         self.btn_review.installEventFilter(self)
         self.btn_review.clicked.connect(self.open_hole_manager)
         tl.addWidget(self.btn_review)
-
-        tl.addStretch()
         self.view_layout.addWidget(self.toolbar)
 
         # ----- Scene + view -----
@@ -536,9 +589,81 @@ class LegoDesigner(QMainWindow):
         
         pob_main_layout.addLayout(bot_row)
 
+        # ----- Text options overlay -----
+        self.text_options_box = QFrame(self)
+        self.text_options_box.setVisible(False)
+        self.text_options_box.setStyleSheet(
+            "QFrame { background: white; border: 1px solid #AAA; border-radius: 6px; } "
+            "QLabel { border: none; background: transparent; } "
+            "QSpinBox { border: 2px solid #888; border-radius: 3px; padding: 2px 4px; min-height: 18px; }"
+        )
+        self.text_options_box.setFixedWidth(138)
+        self.text_options_box.setFixedHeight(52)
+
+        tob_main = QVBoxLayout(self.text_options_box)
+        tob_main.setContentsMargins(5, 3, 5, 3)
+        tob_main.setSpacing(1)
+
+        # Row 1: Font size (label and spinbox tight, no expansion)
+        row1 = QHBoxLayout()
+        row1.setSpacing(0)
+        row1.setContentsMargins(0, 0, 0, 0)
+        size_label = QLabel("Size:")
+        size_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        row1.addWidget(size_label)
+        self.text_font_size = QSpinBox()
+        self.text_font_size.setRange(6, 72)
+        self.text_font_size.setValue(20)
+        self.text_font_size.setSuffix(" pt")
+        self.text_font_size.setToolTip("Font size")
+        self.text_font_size.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        self.text_font_size.valueChanged.connect(self._on_text_font_size_changed)
+        row1.addWidget(self.text_font_size)
+        tob_main.addLayout(row1)
+
+        # Row 2: Bold, Italic, Underline (toggle buttons, tight; reversed when active)
+        _biu_style = (
+            "QPushButton { background: transparent; border: none; color: #444; "
+            "font-size: 12px; padding: 3px 2px; border-radius: 3px; min-width: 22px; min-height: 20px; } "
+            "QPushButton:checked { background: #ddd; } "
+            "QPushButton:hover { background: #eee; } "
+            "QPushButton:checked:hover { background: #d0d0d0; }"
+        )
+        row2 = QHBoxLayout()
+        row2.setSpacing(0)
+        row2.setContentsMargins(0, 0, 0, 0)
+        self.text_bold_btn = QPushButton("B")
+        self.text_bold_btn.setCheckable(True)
+        self.text_bold_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        self.text_bold_btn.setStyleSheet(_biu_style + " QPushButton { font-weight: bold; }")
+        self.text_bold_btn.setToolTip("Bold")
+        self.text_bold_btn.toggled.connect(self._on_text_style_changed)
+        row2.addWidget(self.text_bold_btn)
+        self.text_italic_btn = QPushButton("I")
+        self.text_italic_btn.setCheckable(True)
+        self.text_italic_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        self.text_italic_btn.setStyleSheet(_biu_style + " QPushButton { font-style: italic; }")
+        self.text_italic_btn.setToolTip("Italic")
+        self.text_italic_btn.toggled.connect(self._on_text_style_changed)
+        row2.addWidget(self.text_italic_btn)
+        self.text_underline_btn = QPushButton("U")
+        self.text_underline_btn.setCheckable(True)
+        self.text_underline_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        u_font = self.text_underline_btn.font()
+        u_font.setUnderline(True)
+        self.text_underline_btn.setFont(u_font)
+        self.text_underline_btn.setStyleSheet(_biu_style)
+        self.text_underline_btn.setToolTip("Underline")
+        self.text_underline_btn.toggled.connect(self._on_text_style_changed)
+        row2.addWidget(self.text_underline_btn)
+        tob_main.addLayout(row2)
+
+        self._block_text_controls = False
+
         # ----- Layers panel (embedded in left sidebar) -----
         self._layers_panel = QFrame()
         self._layers_panel.setVisible(True)
+        self._layers_panel.setMinimumWidth(260)
         self._layers_panel.setStyleSheet(
             "QFrame { background: #FFFFFF; border: 1px solid #CCC; border-radius: 6px; padding: 0px 0px 0px 0px; }"
         )
@@ -552,8 +677,21 @@ class LegoDesigner(QMainWindow):
         self._btn_layers_toggle = QPushButton("▾ Layers")
         self._btn_layers_toggle.setCheckable(True)
         self._btn_layers_toggle.setChecked(True)
+        self._btn_layers_toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._btn_layers_toggle.setStyleSheet(
-            "text-align: left; font-weight: bold; font-size: 14pt; background: transparent; border: none; padding: 4px 2px;"
+            """
+            QPushButton {
+                text-align: left;
+                font-weight: bold;
+                font-size: 12pt;
+                background: transparent;
+                border: none;
+                height: 22px;
+                padding-top: 0px;
+                padding-bottom: 4px;
+                padding-left: 8px;
+            }
+            """
         )
         lp_layout.addWidget(self._btn_layers_toggle)
 
@@ -621,13 +759,23 @@ class LegoDesigner(QMainWindow):
                 self._layers_panel.setSizePolicy(QSizePolicy.Policy.Preferred,
                                                  QSizePolicy.Policy.Expanding)
                 self._layers_panel.setMaximumHeight(16777215)
+                self._left_splitter.setMaximumHeight(16777215)
                 self._left_splitter.setSizes([1000, 1000])
             else:
                 header_h = self._btn_layers_toggle.sizeHint().height() + 12
                 self._layers_panel.setSizePolicy(QSizePolicy.Policy.Preferred,
                                                  QSizePolicy.Policy.Fixed)
                 self._layers_panel.setMaximumHeight(header_h)
-                self._left_splitter.setSizes([3000, header_h])
+                # When both collapsed, keep splitter at top by limiting its height
+                inv_collapsed = not self._inventory_body.isVisible()
+                if inv_collapsed:
+                    inv_header_h = self._btn_inventory_toggle.sizeHint().height() + 12
+                    self._left_splitter.setMaximumHeight(inv_header_h + header_h)
+                    self._left_splitter.setSizes([inv_header_h, header_h])
+                else:
+                    self._left_splitter.setMaximumHeight(16777215)
+                    self._left_splitter.setSizes([1000, header_h])
+            self._update_splitter_stretch()
 
         self._btn_layers_toggle.toggled.connect(_toggle_layers)
         self._left_splitter.addWidget(self._layers_panel)
@@ -635,8 +783,9 @@ class LegoDesigner(QMainWindow):
         self._left_splitter.setCollapsible(1, True) # Allow bottom to collapse
         self._left_splitter.setStretchFactor(0, 1)  # Give equal weight
         self._left_splitter.setStretchFactor(1, 1)  # Give equal weight
-        # Apply 50/50 split once layout has given the splitter a real height
-        QTimer.singleShot(100, self._apply_left_splitter_default_ratio)
+        self._update_splitter_stretch()  # splitter fills when both expanded, stays at top when both collapsed
+        # Apply 50/50 split once layout has given the splitter a real height (delay so sidebar is sized)
+        QTimer.singleShot(350, self._apply_left_splitter_default_ratio)
 
     def reposition_overlays(self):
         """Position zoom controls (top-right) and minimap (bottom-right) over the view."""
@@ -655,13 +804,20 @@ class LegoDesigner(QMainWindow):
         if hasattr(self, 'pen_options_box') and self.pen_options_box.isVisible():
             p = self.btn_draw.mapTo(self, self.btn_draw.rect().bottomLeft())
             self.pen_options_box.move(p.x(), p.y())
+        if hasattr(self, 'text_options_box') and self.text_options_box.isVisible():
+            p = self.btn_text.mapTo(self, self.btn_text.rect().bottomLeft())
+            self.text_options_box.move(p.x(), p.y())
 
     def _apply_left_splitter_default_ratio(self):
-        """Set initial sidebar split to 50/50."""
+        """Set initial sidebar split to 50/50, filling the available height."""
         if self._left_splitter_ratio_applied or not hasattr(self, '_left_splitter'):
             return
-        # Using equal sizes forces a 1:1 ratio regardless of actual pixel height
-        self._left_splitter.setSizes([1000, 1000])
+        h = self._left_splitter.height()
+        if h > 100:
+            half = h // 2
+            self._left_splitter.setSizes([half, h - half])
+        else:
+            self._left_splitter.setSizes([1000, 1000])
         self._left_splitter_ratio_applied = True
 
     def resizeEvent(self, e):
@@ -1133,12 +1289,15 @@ class LegoDesigner(QMainWindow):
         tracked = {node.item for node in self.canvas_state.all_item_nodes()
                    if node.item is not None}
 
-        # Ensure both default layers exist in the right order:
-        # "Laser Paths" at index 0 (top), "Elements" below it.
+        # Ensure default layers exist; then enforce Text on top.
         elem_layer  = self.canvas_state.get_or_create_layer("Elements")
+        laser_layer = self.canvas_state.get_or_create_layer("Laser Paths")
+        text_layer  = self.canvas_state.get_or_create_layer("Text")
+        self._ensure_text_layer_on_top()
+        # Re-fetch after reorder (node refs still valid but order changed)
+        text_layer  = self.canvas_state.get_layer("Text")
         laser_layer = self.canvas_state.get_layer("Laser Paths")
-        if laser_layer is None:
-            laser_layer = self.canvas_state.add_layer_at("Laser Paths", 0)
+        elem_layer  = self.canvas_state.get_layer("Elements")
 
         # scene.items() returns items in descending z-order (highest z first).
         # Iterating in reverse (lowest z first) and inserting at index 0 means
@@ -1155,6 +1314,11 @@ class LegoDesigner(QMainWindow):
             elif isinstance(i, LaserPath):
                 laser_layer.insert_child(
                     0, CanvasNode("Laser Path", ITEM, item=i, data={})
+                )
+            elif isinstance(i, CanvasTextItem):
+                snippet = (i.toPlainText() or "Text")[:20]
+                text_layer.insert_child(
+                    0, CanvasNode(f"Text: {snippet}", ITEM, item=i, data={})
                 )
 
         # Prune nodes whose Qt item has been removed from the scene
@@ -1189,6 +1353,14 @@ class LegoDesigner(QMainWindow):
             for rank, node in enumerate(item_nodes):
                 node.item.setZValue(layer_z_base + (n_items - rank))
 
+    def _ensure_text_layer_on_top(self):
+        """Reorder layers so 'Text' is always first (on top). Used after load/rebuild/add layer."""
+        layers = self.canvas_state.layers()
+        names = [l.name for l in layers]
+        if "Text" not in names:
+            return
+        new_order = ["Text"] + [n for n in names if n != "Text"]
+        self.canvas_state.reorder_layers(new_order)
 
     def save_undo_state(self, initial=False):
         if self._is_loading:
@@ -1217,6 +1389,13 @@ class LegoDesigner(QMainWindow):
                     "y2": i.line().y2(),
                     "c": i.color.name(QColor.NameFormat.HexArgb),
                     "a": i.has_arrow,
+                })
+            elif isinstance(i, CanvasTextItem):
+                items_list.append({
+                    "t": "text",
+                    "x": i.pos().x(),
+                    "y": i.pos().y(),
+                    "content": i.toPlainText() or "",
                 })
 
         # Encode layer structure alongside items using item-path/coords as keys
@@ -1263,6 +1442,11 @@ class LegoDesigner(QMainWindow):
                            "y1": round(item.line().y1(), 1),
                            "x2": round(item.line().x2(), 1),
                            "y2": round(item.line().y2(), 1)}
+                elif isinstance(item, CanvasTextItem):
+                    key = {"kt": "text",
+                           "x": round(item.pos().x(), 1),
+                           "y": round(item.pos().y(), 1),
+                           "content": (item.toPlainText() or "")[:50]}
                 else:
                     return None
                 return {"type": "item", "name": node.name, "key": key}
@@ -1313,6 +1497,9 @@ class LegoDesigner(QMainWindow):
             return ("l", round(d["x1"], 1), round(d["y1"], 1),
                          round(d["x2"], 1), round(d["y2"], 1))
 
+        def _text_key(d):
+            return ("text", round(d["x"], 1), round(d["y"], 1), (d.get("content") or "")[:50])
+
         def _item_key(qt_item):
             if isinstance(qt_item, DraggableElement):
                 return ("i", qt_item.file_path,
@@ -1322,12 +1509,15 @@ class LegoDesigner(QMainWindow):
                 ln = qt_item.line()
                 return ("l", round(ln.x1(), 1), round(ln.y1(), 1),
                              round(ln.x2(), 1), round(ln.y2(), 1))
+            elif isinstance(qt_item, CanvasTextItem):
+                return ("text", round(qt_item.pos().x(), 1), round(qt_item.pos().y(), 1),
+                        (qt_item.toPlainText() or "")[:50])
             return None
 
         # ── Build lookup of current live items ────────────────────────────────
         live: dict = {}
         for qt_item in self.scene.items():
-            if isinstance(qt_item, (DraggableElement, LaserPath)):
+            if isinstance(qt_item, (DraggableElement, LaserPath, CanvasTextItem)):
                 k = _item_key(qt_item)
                 if k is not None:
                     live[k] = qt_item
@@ -1358,6 +1548,18 @@ class LegoDesigner(QMainWindow):
                     self.scene.addItem(item)
                     item.snapping_enabled = True
                 reconstructed.append((d, item))
+            elif d["t"] == "text":
+                k = _text_key(d)
+                snapshot_keys.add(k)
+                if k in live:
+                    txt = live[k]
+                    txt.setPlainText(d.get("content") or "")
+                    txt.setPos(d["x"], d["y"])
+                else:
+                    txt = CanvasTextItem(d.get("content") or "Text", self)
+                    txt.setPos(d["x"], d["y"])
+                    self.scene.addItem(txt)
+                reconstructed.append((d, txt))
             else:
                 k = _laser_key(d)
                 snapshot_keys.add(k)
@@ -1390,8 +1592,10 @@ class LegoDesigner(QMainWindow):
         self._active_layer_name = active_layer
         if layer_structure:
             self._restore_layer_structure(layer_structure, reconstructed)
+            self._ensure_text_layer_on_top()
         else:
             self.canvas_state = CanvasState()
+            self.canvas_state.add_layer("Text")
             self.canvas_state.add_layer("Laser Paths")
             self.canvas_state.add_layer("Elements")
             self._rebuild_canvas_tree()
@@ -1410,6 +1614,8 @@ class LegoDesigner(QMainWindow):
         def _make_key(d):
             if d["t"] == "i":
                 return ("i", d["p"], round(d["x"], 1), round(d["y"], 1))
+            elif d["t"] == "text":
+                return ("text", round(d["x"], 1), round(d["y"], 1), (d.get("content") or "")[:50])
             else:
                 return ("l", round(d["x1"], 1), round(d["y1"], 1),
                                round(d["x2"], 1), round(d["y2"], 1))
@@ -1417,6 +1623,8 @@ class LegoDesigner(QMainWindow):
         def _enc_key(k):
             if k["kt"] == "i":
                 return ("i", k["p"], k["x"], k["y"])
+            elif k["kt"] == "text":
+                return ("text", k["x"], k["y"], (k.get("content") or "")[:50])
             else:
                 return ("l", k["x1"], k["y1"], k["x2"], k["y2"])
 
@@ -1458,6 +1666,8 @@ class LegoDesigner(QMainWindow):
                 import os as _os
                 if isinstance(qt_item, DraggableElement):
                     name = _os.path.basename(qt_item.file_path)
+                elif isinstance(qt_item, CanvasTextItem):
+                    name = "Text: " + (qt_item.toPlainText() or "Text")[:20]
                 else:
                     name = "Laser Path"
                 active_layer.insert_child(0, _CN(name, _I, item=qt_item))
@@ -1579,6 +1789,7 @@ class LegoDesigner(QMainWindow):
 
         p.end()
         return QIcon(px)
+
 
     def refresh_layers_panel(self):
         """Rebuild the tree widget from the current canvas_state."""
@@ -1720,7 +1931,8 @@ class LegoDesigner(QMainWindow):
         name, ok = QInputDialog.getText(self, "New Layer", "Layer name:")
         if ok and name.strip():
             name = name.strip()
-            self.canvas_state.add_layer_at(name, 0)  # always insert at top
+            self.canvas_state.add_layer_at(name, 0)
+            self._ensure_text_layer_on_top()  # keep Text layer on top
             self._active_layer_name = name
             self.save_undo_state()
             self.refresh_layers_panel()
@@ -1881,7 +2093,7 @@ class LegoDesigner(QMainWindow):
     def clear_screen(self):
         if QMessageBox.question(self, "Clear", "Clear all?") == QMessageBox.StandardButton.Yes:
             for i in self.scene.items():
-                if isinstance(i, (DraggableElement, LaserPath)):
+                if isinstance(i, (DraggableElement, LaserPath, CanvasTextItem)):
                     self.scene.removeItem(i)
             self.save_undo_state()
 
@@ -1917,10 +2129,93 @@ class LegoDesigner(QMainWindow):
             else:
                 self.pen_options_box.setVisible(False)
 
+        # Show text_options_box when text items are selected
+        selected_text = [i for i in selected if isinstance(i, CanvasTextItem)]
+        if selected_text:
+            first = selected_text[0]
+            # When editing, reflect format of selection or cursor; else use item font
+            focus_item = self.scene.focusItem()
+            if (
+                focus_item is first
+                and (first.textInteractionFlags() & Qt.TextInteractionFlag.TextEditorInteraction)
+            ):
+                cursor = first.textCursor()
+                fmt = cursor.charFormat()
+                f = fmt.font()
+            else:
+                f = first.font()
+            self._block_text_controls = True
+            self.text_font_size.setValue(f.pointSize() if f.pointSize() > 0 else 20)
+            self.text_bold_btn.setChecked(f.bold())
+            self.text_italic_btn.setChecked(f.italic())
+            self.text_underline_btn.setChecked(f.underline())
+            self._block_text_controls = False
+            self.text_options_box.setVisible(True)
+            self._position_text_options_for_selection()
+        else:
+            self.text_options_box.setVisible(False)
+
     def _position_pen_options_for_selection(self):
         """Position pen_options_box below the draw button (same as draw mode)."""
         p = self.btn_draw.mapTo(self, self.btn_draw.rect().bottomLeft())
         self.pen_options_box.move(p.x(), p.y())
+
+    def _position_text_options_for_selection(self):
+        """Position text_options_box below the Text button."""
+        p = self.btn_text.mapTo(self, self.btn_text.rect().bottomLeft())
+        self.text_options_box.move(p.x(), p.y())
+
+    def _selected_text_items(self) -> list:
+        return [i for i in self.scene.selectedItems() if isinstance(i, CanvasTextItem)]
+
+    def _on_text_font_size_changed(self, value: int):
+        if self._block_text_controls:
+            return
+        for item in self._selected_text_items():
+            f = item.font()
+            f.setPointSize(value)
+            item.setFont(f)
+        self.scene.update()
+        self.save_undo_state()
+
+    def _on_text_style_changed(self):
+        if self._block_text_controls:
+            return
+        bold = self.text_bold_btn.isChecked()
+        italic = self.text_italic_btn.isChecked()
+        underline = self.text_underline_btn.isChecked()
+        size = self.text_font_size.value()
+        focus_item = self.scene.focusItem()
+        # When editing with cursor/selection, apply BIU only to selection (or cursor format)
+        if isinstance(focus_item, CanvasTextItem) and (
+            focus_item.textInteractionFlags() & Qt.TextInteractionFlag.TextEditorInteraction
+        ):
+            cursor = focus_item.textCursor()
+            fmt = QTextCharFormat()
+            fmt.setFontWeight(QFont.Weight.Bold if bold else QFont.Weight.Normal)
+            fmt.setFontItalic(italic)
+            fmt.setFontUnderline(underline)
+            if cursor.hasSelection():
+                cursor.mergeCharFormat(fmt)
+                fmt_size = QTextCharFormat()
+                fmt_size.setFontPointSize(size)
+                cursor.mergeCharFormat(fmt_size)
+            else:
+                cursor.mergeCharFormat(fmt)
+            focus_item.setTextCursor(cursor)
+            self.scene.update()
+            self.save_undo_state()
+            return
+        # Not editing: apply to whole item (legacy)
+        for item in self._selected_text_items():
+            f = item.font()
+            f.setPointSize(size)
+            f.setBold(bold)
+            f.setItalic(italic)
+            f.setUnderline(underline)
+            item.setFont(f)
+        self.scene.update()
+        self.save_undo_state()
 
     def _block_laser_controls(self, block: bool):
         self.opacity_slider.blockSignals(block)
@@ -2052,6 +2347,19 @@ class LegoDesigner(QMainWindow):
         item.snap_to_grid()
         self.save_undo_state()
 
+    def add_textbox(self):
+        """Add a text box at the center of the view; it goes in the 'Text' layer by default."""
+        text_layer = self.canvas_state.get_layer("Text")
+        if text_layer is None:
+            text_layer = self.canvas_state.add_layer_at("Text", 0)  # Text layer always on top
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        item = CanvasTextItem("Text", self)
+        item.setPos(center_pos)
+        self.scene.addItem(item)
+        item.setZValue(99999)
+        self._rebuild_canvas_tree()
+        self.save_undo_state()
+
 
     def import_svg(self):
         p, _ = QFileDialog.getOpenFileName(self, "Open SVG", "", "SVG (*.svg)")
@@ -2087,7 +2395,7 @@ class LegoDesigner(QMainWindow):
         # ── Clear scene ──────────────────────────────────────────────────────
         self._is_loading = True
         for i in self.scene.items():
-            if isinstance(i, (DraggableElement, LaserPath)):
+            if isinstance(i, (DraggableElement, LaserPath, CanvasTextItem)):
                 self.scene.removeItem(i)
         self.canvas_state = CanvasState()
 
@@ -2132,6 +2440,20 @@ class LegoDesigner(QMainWindow):
                 # add_child each → children[0] = topmost. Correct.
                 for child in reversed(list(xml_g)):
                     _parse_node(child, layer)
+                return
+
+            # ── Text (CanvasTextItem) ────────────────────────────────────────
+            if gid.startswith("text_"):
+                text_el = xml_g.find(f"{{{SVG_NS}}}text")
+                if text_el is not None:
+                    x = float(text_el.get("x", 0))
+                    y = float(text_el.get("y", 0))
+                    content = (text_el.text or "").strip()
+                    item = CanvasTextItem(content or "Text", self)
+                    item.setPos(x, y)
+                    self.scene.addItem(item)
+                    node = CanvasNode("Text", ITEM, item=item, data={})
+                    canvas_parent.add_child(node)
                 return
 
             # ── DraggableElement ─────────────────────────────────────────────
@@ -2188,11 +2510,13 @@ class LegoDesigner(QMainWindow):
         for xml_g in svg_root:
             _parse_node(xml_g, self.canvas_state.root)
 
-        # ── Ensure default layers exist ──────────────────────────────────────
+        # ── Ensure default layers exist; Text always on top ───────────────────
         existing_names = {l.name for l in self.canvas_state.layers()}
         if not existing_names:
+            self.canvas_state.add_layer("Text")
             self.canvas_state.add_layer("Laser Paths")
             self.canvas_state.add_layer("Elements")
+        self._ensure_text_layer_on_top()
         # Active layer defaults to Elements if present, otherwise first layer
         if "Elements" in existing_names:
             self._active_layer_name = "Elements"
@@ -2405,6 +2729,20 @@ class LegoDesigner(QMainWindow):
 
             return elems
 
+        def _text_elements(item):
+            """Serialise a CanvasTextItem to SVG <text>."""
+            pos = item.pos()
+            content = item.toPlainText() or ""
+            text_el = _ET.Element(f"{{{SVG_NS}}}text", {
+                "x": f"{pos.x():.2f}",
+                "y": f"{pos.y():.2f}",
+                "fill": "#000000",
+                "font-family": "sans-serif",
+                "font-size": "12",
+            })
+            text_el.text = content
+            return [text_el]
+
         # ── Recursive node serialiser ────────────────────────────────────────
         def _node_to_g(node):
             """Convert a CanvasNode to an ET element (or list of elements)."""
@@ -2451,6 +2789,14 @@ class LegoDesigner(QMainWindow):
                         f"{INK}label": node.name,
                     })
                     for el in _laser_elements(item):
+                        g.append(el)
+                    return [g]
+                elif isinstance(item, CanvasTextItem):
+                    g = _ET.Element(f"{{{SVG_NS}}}g", {
+                        "id":          f"text_{id(item)}",
+                        f"{INK}label": "Text",
+                    })
+                    for el in _text_elements(item):
                         g.append(el)
                     return [g]
                 return []

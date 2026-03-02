@@ -1,9 +1,9 @@
 import os
 import math
 import xml.etree.ElementTree as ET
-from PyQt6.QtWidgets import QGraphicsLineItem, QGraphicsEllipseItem
-from PyQt6.QtCore import Qt, QPointF, QLineF, QRectF
-from PyQt6.QtGui import QColor, QPen, QPolygonF, QBrush
+from PyQt6.QtWidgets import QGraphicsLineItem, QGraphicsEllipseItem, QGraphicsTextItem
+from PyQt6.QtCore import Qt, QPointF, QLineF, QRectF, QTimer
+from PyQt6.QtGui import QColor, QPen, QPolygonF, QBrush, QFont, QTextCursor, QTextBlockFormat, QTextOption
 from PyQt6.QtSvgWidgets import QGraphicsSvgItem
 
 from dialogs import PropertyPopup
@@ -180,6 +180,114 @@ class LaserPath(QGraphicsLineItem):
             painter.setBrush(QBrush(self.color))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawPolygon(QPolygonF([tip, p1, p2]))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CanvasTextItem — draggable text label on the canvas (lives in "Text" layer)
+# ─────────────────────────────────────────────────────────────────────────────
+class CanvasTextItem(QGraphicsTextItem):
+    """A movable, selectable text box. Double-click to edit. Default layer: Text."""
+
+    def __init__(self, text="Text", parent_app=None):
+        super().__init__(text)
+        self.parent_app = parent_app
+        self.setFlags(self.GraphicsItemFlag.ItemIsMovable | self.GraphicsItemFlag.ItemIsSelectable)
+        self.setZValue(5)
+        self.setDefaultTextColor(QColor(0, 0, 0))
+        self.setFont(QFont("Sans Serif", 20))
+        doc = self.document()
+        doc.setDocumentMargin(6)
+        # No word wrap: new line only when user presses Enter; default block alignment center
+        opt = doc.defaultTextOption()
+        opt.setWrapMode(QTextOption.WrapMode.NoWrap)
+        opt.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        doc.setDefaultTextOption(opt)
+        self._applying_center = False
+        doc.contentsChanged.connect(self._on_document_contents_changed)
+        self._fit_width_to_content()
+        self._apply_center_alignment()
+
+    def _on_document_contents_changed(self):
+        """Keep center alignment while editing (e.g. after typing or Enter)."""
+        if getattr(self, "_applying_center", False):
+            return
+        # Defer so the new block (e.g. from Enter) exists before we apply alignment
+        QTimer.singleShot(0, self._apply_center_and_update)
+
+    def _apply_center_and_update(self):
+        """Apply center alignment and force immediate repaint (used after Enter while editing)."""
+        if getattr(self, "_applying_center", False):
+            return
+        self._apply_center_alignment()
+        self.update()
+
+    def _fit_width_to_content(self, padding: float = 12):
+        """Set text width to longest line width + padding so box grows with text and does not wrap."""
+        self.setTextWidth(-1)
+        doc = self.document()
+        ideal_w = doc.size().width()
+        w = max(ideal_w + padding, 40.0)
+        self.setTextWidth(w)
+        # Re-apply center after reflow (setTextWidth(-1) resets block alignment for some blocks)
+        self._apply_center_alignment()
+
+    def _apply_center_alignment(self):
+        """Set all blocks to center alignment. Use AlignmentFlag only (no Qt.Alignment)."""
+        self._applying_center = True
+        try:
+            doc = self.document()
+            block = doc.firstBlock()
+            if not block.isValid():
+                return
+            fmt = QTextBlockFormat()
+            fmt.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            cursor = QTextCursor(doc)
+            while block.isValid():
+                cursor.setPosition(block.position())
+                cursor.mergeBlockFormat(fmt)
+                block = block.next()
+        finally:
+            self._applying_center = False
+
+    def setPlainText(self, text: str):
+        super().setPlainText(text)
+        self._fit_width_to_content()
+        self._apply_center_alignment()
+
+    def setHtml(self, html: str):
+        super().setHtml(html)
+        self._fit_width_to_content()
+        self._apply_center_alignment()
+
+    def paint(self, painter, option, widget=None):
+        br = self.boundingRect()
+        painter.setPen(QPen(QColor(0, 0, 0), 3))
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        painter.drawRoundedRect(br, 2, 2)
+        super().paint(painter, option, widget)
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self._fit_width_to_content()
+        self._apply_center_alignment()
+        if self.parent_app and not getattr(self.parent_app, "_is_loading", False):
+            self.parent_app.save_undo_state()
+        # Re-apply center after save_undo_state in case it or later Qt processing reset document alignment
+        self._apply_center_alignment()
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if self.parent_app and not getattr(self.parent_app, "_is_loading", False):
+            if hasattr(self.parent_app, "_sync_z_order"):
+                self.parent_app._sync_z_order()
+            self.parent_app.save_undo_state()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+        super().mouseDoubleClickEvent(event)
 
 
 class DraggableElement(QGraphicsSvgItem):

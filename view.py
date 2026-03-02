@@ -86,6 +86,14 @@ class CustomGraphicsView(QGraphicsView):
         if event.key() == Qt.Key.Key_Space:
             self.main_app.toggle_select()
         elif event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            from elements import CanvasTextItem
+            focus_item = self.scene().focusItem()
+            # Only delete the box when selected but not editing text; else let Backspace edit text
+            if isinstance(focus_item, CanvasTextItem) and (
+                focus_item.textInteractionFlags() & Qt.TextInteractionFlag.TextEditorInteraction
+            ):
+                super().keyPressEvent(event)
+                return
             self.main_app.delete_selected()
 
         super().keyPressEvent(event)
@@ -160,17 +168,18 @@ class CustomGraphicsView(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def erase_at_pos(self, viewport_pos):
-        """Helper to erase laser paths at a given viewport position."""
+        """Helper to erase laser paths or text boxes at a given viewport position."""
+        from elements import LaserPath, CanvasTextItem
         scene_pt = self.mapToScene(viewport_pos)
         rect = QRectF(scene_pt.x() - 8, scene_pt.y() - 8, 16, 16)
         items = self.scene().items(rect)
-        
+
         erased = False
         for item in items:
-            if isinstance(item, LaserPath):
+            if isinstance(item, (LaserPath, CanvasTextItem)):
                 self.scene().removeItem(item)
                 erased = True
-        
+
         if erased:
             self.main_app.save_undo_state()
 
