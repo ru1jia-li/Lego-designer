@@ -193,10 +193,10 @@ class LegoDesigner(QMainWindow):
             QPushButton {
                 text-align: left;
                 font-weight: bold;
-                font-size: 12pt;
+                font-size: 14pt;
                 background: transparent;
                 border: none;
-                height: 22px;
+                height: 28px;
                 padding-top: 0px;
                 padding-bottom: 4px;
                 padding-left: 8px;
@@ -683,10 +683,10 @@ class LegoDesigner(QMainWindow):
             QPushButton {
                 text-align: left;
                 font-weight: bold;
-                font-size: 12pt;
+                font-size: 14pt;
                 background: transparent;
                 border: none;
-                height: 22px;
+                height: 30px;
                 padding-top: 0px;
                 padding-bottom: 4px;
                 padding-left: 8px;
