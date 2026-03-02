@@ -505,7 +505,8 @@ class HoleManagerDialog(QDialog):
             # Refresh holes in main application immediately
             if self.parent_app:
                 # Re-detect breadboard holes if the current file is the breadboard
-                if "breadboard.svg" in key:
+                bb_basename = os.path.basename(getattr(self.parent_app, "_breadboard_path", ""))
+                if key == bb_basename:
                     self.parent_app.detect_breadboard_holes()
                     self.parent_app.view.breadboard_holes = self.parent_app.breadboard_holes
                 

@@ -11,10 +11,10 @@ from PyQt6.QtWidgets import (
     QFrame, QScrollArea, QLabel, QFileDialog, QCheckBox, QMessageBox,
     QGridLayout, QGraphicsScene, QColorDialog, QLineEdit, QToolTip, QSlider,
     QTreeWidget, QTreeWidgetItem, QAbstractItemView, QInputDialog, QMenu, QSizePolicy, QSplitter,
-    QSpinBox,
+    QSpinBox, QDialog, QListWidget, QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt, QPointF, QRectF, QTimer, QLineF, QEvent, QSize
-from PyQt6.QtGui import QColor, QPen, QPixmap, QPainter, QFont, QIcon, QPolygonF, QTransform, QTextCharFormat
+from PyQt6.QtGui import QColor, QPen, QPixmap, QPainter, QFont, QIcon, QPolygonF, QTransform, QTextCharFormat, QBrush
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtSvgWidgets import QGraphicsSvgItem
 
@@ -86,10 +86,6 @@ class LayersTreeWidget(QTreeWidget):
             if node and node.node_type == LAYER:
                 self.main_app._active_layer_name = node.name
                 self.main_app._refresh_active_layer_display()
-
-
-FINE_GRID_CACHE = "fine_grid_cache.json"
-
 
 
 class LegoDesigner(QMainWindow):
@@ -377,6 +373,16 @@ class LegoDesigner(QMainWindow):
 
         tl.addStretch()
 
+        # Breadboard choice (left of Review Holes)
+        self.btn_breadboard = QPushButton("📋 Breadboard")
+        self.btn_breadboard.setObjectName("ToolBtn")
+        self.btn_breadboard.setFixedSize(120, 32)
+        self.btn_breadboard.setToolTip("Choose breadboard")
+        self.btn_breadboard.setToolTipDuration(0)
+        self.btn_breadboard.installEventFilter(self)
+        self.btn_breadboard.clicked.connect(self.open_choose_breadboard_dialog)
+        tl.addWidget(self.btn_breadboard)
+
         # Hole manager (rightmost on ribbon)
         self.btn_review = QPushButton("🔍 Review Holes")
         self.btn_review.setObjectName("ToolBtn")
@@ -390,6 +396,7 @@ class LegoDesigner(QMainWindow):
 
         # ----- Scene + view -----
         self.scene = QGraphicsScene()
+        self.scene.setBackgroundBrush(QBrush(QColor("white")))
         self.view = CustomGraphicsView(self.scene, self)
         self.view.setStyleSheet("background: white; border: none;")
         self.view_layout.addWidget(self.view)
@@ -399,7 +406,8 @@ class LegoDesigner(QMainWindow):
         # =========================================================
         #   BREADBOARD + HOLES
         # =========================================================
-        self.breadboard = QGraphicsSvgItem("breadboard.svg")
+        self._breadboard_path = os.path.join(self.base_dir, "Breadboards", "Lego_Board_275x350_M3_M6.svg")
+        self.breadboard = QGraphicsSvgItem(self._breadboard_path)
         self.breadboard.setZValue(-1)
         self.scene.addItem(self.breadboard)
 
@@ -513,10 +521,28 @@ class LegoDesigner(QMainWindow):
         ol.addWidget(self.btn_rotate_overlay)
         ol.addWidget(self.btn_del_btn)
 
-        # ----- Minimap -----
-        self.minimap = QLabel(self.view)
+        # ----- Minimap (container with slit button to move left/right) -----
+        self._minimap_at_left = False
+        self._minimap_container = QWidget(self.view)
+        self._minimap_container.setFixedSize(238, 160)
+        minimap_layout = QHBoxLayout(self._minimap_container)
+        minimap_layout.setContentsMargins(0, 0, 0, 0)
+        minimap_layout.setSpacing(0)
+
+        self._minimap_slit_btn = QPushButton("‹")
+        self._minimap_slit_btn.setFixedSize(18, 160)
+        self._minimap_slit_btn.setStyleSheet(
+            "background: #E8E8E8; border: 1px solid #CCC; font-size: 14pt; color: #555;"
+        )
+        self._minimap_slit_btn.setToolTip("Move minimap to bottom left")
+        self._minimap_slit_btn.clicked.connect(self._toggle_minimap_side)
+
+        self.minimap = QLabel(self._minimap_container)
         self.minimap.setFixedSize(220, 160)
         self.minimap.setStyleSheet("background: #D0D0D0; border: 2px solid #999;")
+
+        minimap_layout.addWidget(self._minimap_slit_btn)
+        minimap_layout.addWidget(self.minimap)
 
         self.reposition_overlays()
         self.scene.selectionChanged.connect(self._on_selection_changed)
@@ -787,16 +813,38 @@ class LegoDesigner(QMainWindow):
         # Apply 50/50 split once layout has given the splitter a real height (delay so sidebar is sized)
         QTimer.singleShot(350, self._apply_left_splitter_default_ratio)
 
+    def _toggle_minimap_side(self):
+        """Move minimap between bottom-right and bottom-left; update slit button side and arrow."""
+        self._minimap_at_left = not self._minimap_at_left
+        layout = self._minimap_container.layout()
+        # Remove both widgets and re-add in the right order
+        layout.removeWidget(self._minimap_slit_btn)
+        layout.removeWidget(self.minimap)
+        if self._minimap_at_left:
+            layout.addWidget(self.minimap)
+            layout.addWidget(self._minimap_slit_btn)
+            self._minimap_slit_btn.setText("›")
+            self._minimap_slit_btn.setToolTip("Move minimap to bottom right")
+        else:
+            layout.addWidget(self._minimap_slit_btn)
+            layout.addWidget(self.minimap)
+            self._minimap_slit_btn.setText("‹")
+            self._minimap_slit_btn.setToolTip("Move minimap to bottom left")
+        self.reposition_overlays()
+
     def reposition_overlays(self):
-        """Position zoom controls (top-right) and minimap (bottom-right) over the view."""
+        """Position zoom controls (top-right) and minimap (bottom-right or bottom-left) over the view."""
         vw, vh = self.view.width(), self.view.height()
 
         # Zoom / delete overlay: top-right with small margin
         self.overlay.move(vw - 60, 20)
 
-        # Minimap: bottom-right with 20px margin from edges
-        mw, mh = self.minimap.width(), self.minimap.height()
-        self.minimap.move(vw - mw - 20, vh - mh - 20)
+        # Minimap container: bottom-right (default) or bottom-left with 20px margin
+        cw, ch = self._minimap_container.width(), self._minimap_container.height()
+        if getattr(self, '_minimap_at_left', False):
+            self._minimap_container.move(20, vh - ch - 20)
+        else:
+            self._minimap_container.move(vw - cw - 20, vh - ch - 20)
 
         # Nudge pad: centered at bottom
         self.nudge_box.move((vw - 130) // 2, vh - 150)
@@ -830,7 +878,7 @@ class LegoDesigner(QMainWindow):
     # =============================================================
     def detect_breadboard_holes(self):
         try:
-            tree = ET.parse("breadboard.svg")
+            tree = ET.parse(self._breadboard_path)
             root = tree.getroot()
 
             viewBox = root.get("viewBox")
@@ -859,6 +907,60 @@ class LegoDesigner(QMainWindow):
         except Exception as e:
             print("Hole detection failed:", e)
 
+    def open_choose_breadboard_dialog(self):
+        """Show dialog to choose a breadboard from the Breadboards folder."""
+        breadboards_dir = os.path.join(self.base_dir, "Breadboards")
+        if not os.path.isdir(breadboards_dir):
+            QMessageBox.information(self, "Choose breadboard", "Breadboards folder not found.")
+            return
+        svgs = sorted(
+            [f for f in os.listdir(breadboards_dir) if f.lower().endswith(".svg")],
+            key=lambda x: x.lower()
+        )
+        if not svgs:
+            QMessageBox.information(self, "Choose breadboard", "No SVG files in Breadboards folder.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Choose breadboard")
+        layout = QVBoxLayout(dlg)
+        list_widget = QListWidget()
+        paths = []
+        current_idx = 0
+        for f in svgs:
+            full_path = os.path.join(breadboards_dir, f)
+            paths.append(full_path)
+            display = os.path.splitext(f)[0]
+            list_widget.addItem(display)
+            if os.path.normpath(full_path) == os.path.normpath(self._breadboard_path):
+                current_idx = len(paths) - 1
+        list_widget.setCurrentRow(current_idx)
+        layout.addWidget(list_widget)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btn_box.accepted.connect(dlg.accept)
+        btn_box.rejected.connect(dlg.reject)
+        layout.addWidget(btn_box)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        idx = list_widget.currentRow()
+        if idx < 0:
+            return
+        chosen_path = paths[idx]
+
+        self._breadboard_path = chosen_path
+        self.scene.removeItem(self.breadboard)
+        self.breadboard = QGraphicsSvgItem(chosen_path)
+        self.breadboard.setZValue(-1)
+        self.scene.addItem(self.breadboard)
+        self.detect_breadboard_holes()
+        self.view.breadboard_holes = self.breadboard_holes
+        self.view.setSceneRect(self.breadboard.boundingRect())
+        self._generate_fine_grid()
 
     # =============================================================
     #   HOLE PATTERN (JSON) FOR PARTS
@@ -910,17 +1012,24 @@ class LegoDesigner(QMainWindow):
         return spacing
 
 
-    def _generate_fine_grid(self):
-        cache_path = os.path.join(os.path.dirname(__file__), FINE_GRID_CACHE)
+    def _fine_grid_cache_path(self):
+        """Path to the fine-grid cache for the current breadboard (in Breadboards folder)."""
+        name = os.path.splitext(os.path.basename(self._breadboard_path))[0]
+        return os.path.join(self.base_dir, "Breadboards", f"{name}_fine_grids.json")
 
-        # 1. Try to load from cache
+    def _generate_fine_grid(self):
+        breadboards_dir = os.path.join(self.base_dir, "Breadboards")
+        cache_path = self._fine_grid_cache_path()
+
+        # 1. Try to load from cache for this breadboard
         if os.path.exists(cache_path):
             try:
                 with open(cache_path, "r") as f:
                     data = json.load(f)
                 self.fine_grid_points = [QPointF(x, y) for x, y in data]
                 return
-            except: pass
+            except Exception:
+                pass
 
         if not self.breadboard_holes:
             self.fine_grid_points = []
@@ -949,12 +1058,14 @@ class LegoDesigner(QMainWindow):
 
         self.fine_grid_points = [QPointF(x, y) for x, y in point_set]
 
-        # 3. Save to cache
+        # 3. Save to cache in Breadboards folder
         try:
+            os.makedirs(breadboards_dir, exist_ok=True)
             data = [(p.x(), p.y()) for p in self.fine_grid_points]
             with open(cache_path, "w") as f:
                 json.dump(data, f)
-        except: pass
+        except Exception:
+            pass
         
     # =============================================================
     #   MINIMAP
@@ -2835,8 +2946,7 @@ class LegoDesigner(QMainWindow):
             f"{INK}groupmode":   "layer",
             f"{SODI}insensitive":"true",
         })
-        bb_path = os.path.join(self.base_dir, "breadboard.svg")
-        for child_el in _inline_svg_file(bb_path):
+        for child_el in _inline_svg_file(self._breadboard_path):
             bb_g.append(child_el)
 
         # Append breadboard first (bottom), then user layers bottom→top
