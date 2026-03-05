@@ -2,6 +2,7 @@ import sys
 import os
 import re
 import json
+from datetime import datetime
 import xml.etree.ElementTree as ET
 
 import math
@@ -313,11 +314,31 @@ class LegoDesigner(QMainWindow):
 
         for sym, func, tooltip in [
             ("📤", self.export_svg, "Export SVG"),
-            ("📥", self.import_svg, "Open SVG"),
+            ("OPEN_DROPDOWN", None, "Open"),
             ("↩️", self.undo_action, "Undo (Ctrl+Z)"),
             ("↪️", self.redo_action, "Redo (Ctrl+Y)"),
             ("🧹", self.clear_screen, "Clear All"),
         ]:
+            if sym == "OPEN_DROPDOWN":
+                open_btn = QPushButton("📥")
+                open_btn.setObjectName("ToolBtn")
+                open_btn.setFixedSize(50, 32)
+                open_btn.setToolTip("Open")
+                open_btn.setToolTipDuration(0)
+                open_btn.installEventFilter(self)
+                open_menu = QMenu()
+                open_menu.addAction("Open SVG...", self.import_svg)
+                open_menu.addAction("Open from autosave", self.open_from_autosave)
+                open_menu.setStyleSheet(
+                    "QMenu { background: white; border: 1px solid #ccc; border-radius: 4px; padding: 4px 0; font-size: 12pt; }"
+                    "QMenu::item { padding: 4px 20px; }"
+                    "QMenu::item:selected { background: #e0e0e0; }"
+                )
+                open_btn.clicked.connect(
+                    lambda checked=False, btn=open_btn, m=open_menu: m.popup(btn.mapToGlobal(btn.rect().bottomLeft()))
+                )
+                tl.addWidget(open_btn)
+                continue
             b = QPushButton(sym)
             b.setObjectName("ToolBtn")
             b.setFixedSize(50, 32)
@@ -440,11 +461,16 @@ class LegoDesigner(QMainWindow):
                     self.acc_layout.addWidget(CollapsibleCategory(cat, imgs, self))
 
         # =========================================================
-        #   MINIMAP TIMER + INITIAL STATE
+        #   MINIMAP TIMER + AUTOSAVE TIMER + INITIAL STATE
         # =========================================================
         self.map_timer = QTimer()
         self.map_timer.timeout.connect(self.update_minimap)
         self.map_timer.start(33)
+
+        self.autosave_dir = os.path.join(self.base_dir, "autosave")
+        self._autosave_timer = QTimer()
+        self._autosave_timer.timeout.connect(self._do_autosave)
+        self._autosave_timer.start(120_000)  # 2 minutes
 
         self.set_laser_color("#FF0000")
         self.save_undo_state(initial=True)
@@ -2504,6 +2530,21 @@ class LegoDesigner(QMainWindow):
         if p:
             self._load_svg_file(p)
 
+    def open_from_autosave(self):
+        """Open a file from the autosave folder."""
+        if not os.path.isdir(self.autosave_dir):
+            QMessageBox.information(self, "Open from autosave", "No autosave files found.")
+            return
+        files = [f for f in os.listdir(self.autosave_dir) if f.lower().endswith(".svg")]
+        if not files:
+            QMessageBox.information(self, "Open from autosave", "No autosave files found.")
+            return
+        p, _ = QFileDialog.getOpenFileName(
+            self, "Open from autosave", self.autosave_dir, "SVG (*.svg)"
+        )
+        if p:
+            self._load_svg_file(p)
+
     def _load_svg_file(self, path):
         """Parse an app-exported (or Illustrator-edited) SVG and reconstruct
         the full canvas state: layers, groups, DraggableElements, LaserPaths."""
@@ -2676,7 +2717,16 @@ class LegoDesigner(QMainWindow):
     #   SVG EXPORT
     # =============================================================
     def export_svg(self):
-        """Export the canvas to an Illustrator-compatible SVG file.
+        """Export the canvas to an Illustrator-compatible SVG file."""
+        p, _ = QFileDialog.getSaveFileName(self, "Export SVG", "", "SVG (*.svg)")
+        if not p:
+            return
+        if not p.lower().endswith(".svg"):
+            p += ".svg"
+        self._write_svg_to_path(p)
+
+    def _write_svg_to_path(self, path):
+        """Build the full SVG tree and write it to path.
 
         Layer structure:
           - Each CanvasState layer → <g inkscape:groupmode="layer">
@@ -2689,12 +2739,6 @@ class LegoDesigner(QMainWindow):
         """
         import xml.etree.ElementTree as _ET
         import math as _math
-
-        p, _ = QFileDialog.getSaveFileName(self, "Export SVG", "", "SVG (*.svg)")
-        if not p:
-            return
-        if not p.lower().endswith(".svg"):
-            p += ".svg"
 
         # ── Namespaces ──────────────────────────────────────────────────────
         SVG_NS  = "http://www.w3.org/2000/svg"
@@ -2988,10 +3032,36 @@ class LegoDesigner(QMainWindow):
             pass  # Python < 3.9 fallback
 
         tree_out = _ET.ElementTree(root_svg)
-        with open(p, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
             f.write(_ET.tostring(root_svg, encoding="unicode"))
 
+    def _do_autosave(self):
+        """Save a timestamped SVG to autosave/ and keep at most 10 files."""
+        if self._is_loading:
+            return
+        os.makedirs(self.autosave_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        path = os.path.join(self.autosave_dir, f"autosave_{ts}.svg")
+        try:
+            self._write_svg_to_path(path)
+        except Exception:
+            return
+        # Cap at 10 files: list *.svg by mtime newest first, delete oldest if > 10
+        try:
+            files = [
+                os.path.join(self.autosave_dir, f)
+                for f in os.listdir(self.autosave_dir)
+                if f.lower().endswith(".svg")
+            ]
+            files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+            for old in files[10:]:
+                try:
+                    os.remove(old)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     # =============================================================
     #   HOLE MANAGER
