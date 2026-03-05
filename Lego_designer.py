@@ -1418,7 +1418,8 @@ class LegoDesigner(QMainWindow):
                 scene_center = item.mapToScene(item.line().center())
                 local_center = item.line().center()
             new_scene_center = rotate_90_cw(scene_center.x(), scene_center.y())
-            new_rot = item.rotation() + 90
+            # LaserPath: arrow points +x in item coords; subtract 90 so arrow rotates 90° CW with group (Qt +angle = CCW)
+            new_rot = (item.rotation() - 90) if isinstance(item, LaserPath) else (item.rotation() + 90)
             offset_pt = offset_for_pos(item, local_center, new_rot)
             new_pos = new_scene_center - offset_pt
             item.setRotation(new_rot)
