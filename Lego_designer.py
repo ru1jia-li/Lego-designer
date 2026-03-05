@@ -313,7 +313,7 @@ class LegoDesigner(QMainWindow):
         tl = QHBoxLayout(self.toolbar)
 
         for sym, func, tooltip in [
-            ("📤", self.export_svg, "Export SVG"),
+            ("💾", self.export_svg, "Save as SVG"),
             ("OPEN_DROPDOWN", None, "Open"),
             ("↩️", self.undo_action, "Undo (Ctrl+Z)"),
             ("↪️", self.redo_action, "Redo (Ctrl+Y)"),
@@ -497,7 +497,7 @@ class LegoDesigner(QMainWindow):
 
         directions = [
             ("◸", 0, 0, -1, -1), ("△", 0, 1, 0, -1), ("◹", 0, 2, 1, -1),
-            ("◁", 1, 0, -1,  0), ("↻", 1, 1, 0,  0), ("▷", 1, 2, 1,  0),
+            ("◁", 1, 0, -1,  0), ("↺", 1, 1, 0,  0), ("▷", 1, 2, 1,  0),
             ("◺", 2, 0, -1,  1), ("▽", 2, 1, 0,  1), ("◿", 2, 2, 1,  1),
         ]
 
@@ -506,7 +506,7 @@ class LegoDesigner(QMainWindow):
             btn.setFixedSize(40, 40)
             btn.setStyleSheet(nudge_style)
 	
-            if sym == "↻":
+            if sym == "↺":
                 btn.clicked.connect(self.rotate_selected_90)
             else:
                 btn.clicked.connect(lambda ch, x=dx, y=dy: self.nudge_selected(x, y))
