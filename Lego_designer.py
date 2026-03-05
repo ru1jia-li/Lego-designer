@@ -430,6 +430,7 @@ class LegoDesigner(QMainWindow):
         self._breadboard_path = os.path.join(self.base_dir, "Breadboards", "Lego_Board_275x350_M3_M6.svg")
         self.breadboard = QGraphicsSvgItem(self._breadboard_path)
         self.breadboard.setZValue(-1)
+        self.breadboard.setCacheMode(QGraphicsSvgItem.CacheMode.DeviceCoordinateCache)
         self.scene.addItem(self.breadboard)
 
         self.detect_breadboard_holes()
@@ -982,6 +983,7 @@ class LegoDesigner(QMainWindow):
         self.scene.removeItem(self.breadboard)
         self.breadboard = QGraphicsSvgItem(chosen_path)
         self.breadboard.setZValue(-1)
+        self.breadboard.setCacheMode(QGraphicsSvgItem.CacheMode.DeviceCoordinateCache)
         self.scene.addItem(self.breadboard)
         self.detect_breadboard_holes()
         self.view.breadboard_holes = self.breadboard_holes
@@ -2357,14 +2359,27 @@ class LegoDesigner(QMainWindow):
     def _selected_text_items(self) -> list:
         return [i for i in self.scene.selectedItems() if isinstance(i, CanvasTextItem)]
 
+    def _scene_update_items(self, items, margin: float = 2.0):
+        """Invalidate only the region covered by items instead of the whole scene."""
+        if not items:
+            self.scene.update()
+            return
+        union = QRectF()
+        for item in items:
+            r = item.sceneBoundingRect()
+            union = union.united(r) if not union.isNull() else r
+        if union.isValid():
+            self.scene.update(union.adjusted(-margin, -margin, margin, margin))
+
     def _on_text_font_size_changed(self, value: int):
         if self._block_text_controls:
             return
-        for item in self._selected_text_items():
+        items = self._selected_text_items()
+        for item in items:
             f = item.font()
             f.setPointSize(value)
             item.setFont(f)
-        self.scene.update()
+        self._scene_update_items(items)
         self.save_undo_state()
 
     def _on_text_style_changed(self):
@@ -2392,18 +2407,19 @@ class LegoDesigner(QMainWindow):
             else:
                 cursor.mergeCharFormat(fmt)
             focus_item.setTextCursor(cursor)
-            self.scene.update()
+            self._scene_update_items([focus_item])
             self.save_undo_state()
             return
         # Not editing: apply to whole item (legacy)
-        for item in self._selected_text_items():
+        items = self._selected_text_items()
+        for item in items:
             f = item.font()
             f.setPointSize(size)
             f.setBold(bold)
             f.setItalic(italic)
             f.setUnderline(underline)
             item.setFont(f)
-        self.scene.update()
+        self._scene_update_items(items)
         self.save_undo_state()
 
     def _block_laser_controls(self, block: bool):
@@ -2435,7 +2451,7 @@ class LegoDesigner(QMainWindow):
             if has_arrow is not None:
                 lp.has_arrow = has_arrow
             lp.update()
-        self.scene.update()
+        self._scene_update_items(lasers)
         self.save_undo_state()
 
     def set_laser_color(self, color):

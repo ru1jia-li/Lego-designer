@@ -345,6 +345,7 @@ class DraggableElement(QGraphicsSvgItem):
         self.setZValue(5)
 
         self.setTransformOriginPoint(self.boundingRect().center())
+        self.setCacheMode(self.CacheMode.DeviceCoordinateCache)
 
         #if self.holes: 
         #    self.setTransformOriginPoint(self.holes[0]) 
