@@ -1145,23 +1145,13 @@ class LegoDesigner(QMainWindow):
     #   NUDGE + SNAPPING HELPERS
     # =============================================================
     def nudge_selected(self, dx, dy):
-        # Toggle debug messages here (change to False when you don't need them)
-        debug_nudge = False
-
-        if debug_nudge:
-            print(f"[NUDGE] called with dx={dx}, dy={dy}")
-
         items = [i for i in self.scene.selectedItems() if isinstance(i, (DraggableElement, LaserPath, CanvasTextItem))]
         if not items:
-            if debug_nudge:
-                print("[NUDGE] no items selected")
             return
 
         has_elem_grid = bool(self.breadboard_holes)
         has_laser_grid = bool(getattr(self, "fine_grid_points", []))
         if not has_elem_grid and not has_laser_grid:
-            if debug_nudge:
-                print("[NUDGE] no grids available")
             return
 
         # Pick one anchor: nudge only it, then apply same delta to all others (group nudge)
@@ -1195,8 +1185,6 @@ class LegoDesigner(QMainWindow):
             # ---------------------------------------------------------
             if isinstance(item, DraggableElement):
                 if not has_elem_grid or not item.holes:
-                    if debug_nudge:
-                        print(f"[NUDGE] skip {getattr(item, 'name', 'item')} — no holes/grid")
                     continue
 
                 ref = item.mapToScene(item.holes[0])
@@ -1206,13 +1194,7 @@ class LegoDesigner(QMainWindow):
                     default=None
                 )
                 if current is None:
-                    if debug_nudge:
-                        print(f"[NUDGE] no current hole for {getattr(item,'name','item')}")
                     continue
-
-                if debug_nudge:
-                    print(f"[NUDGE] {getattr(item, 'name', 'item')} | ref ≈ ({ref.x():.1f}, {ref.y():.1f})")
-                    print(f"  current: ({current.x():.1f}, {current.y():.1f})")
 
                 best_target = None
                 best_dist = float('inf')
@@ -1267,14 +1249,10 @@ class LegoDesigner(QMainWindow):
                         best_target = h
 
                 if best_target is None:
-                    if debug_nudge:
-                        print(f"[NUDGE] no valid target for {getattr(item,'name','item')}")
                     continue
 
                 delta_scene = best_target - ref
                 move_len = delta_scene.manhattanLength()
-                if debug_nudge:
-                    print(f"[NUDGE] → moving to ({best_target.x():.1f}, {best_target.y():.1f})  len = {move_len:.1f}")
                 if 1 < move_len < 300:
                     item.setPos(item.pos() + delta_scene)
                     moved_count += 1
@@ -1350,8 +1328,6 @@ class LegoDesigner(QMainWindow):
                 if 0.5 < move_len < 300:
                     item.moveBy(delta_scene.x(), delta_scene.y())
                     moved_count += 1
-                if debug_nudge:
-                    print(f"[NUDGE] moved laser by ({delta_scene.x():.1f}, {delta_scene.y():.1f})")
 
         # Apply same delta to all other selected items (group nudge)
         if moved_count > 0 and (delta_scene.x() != 0 or delta_scene.y() != 0):
@@ -1364,11 +1340,7 @@ class LegoDesigner(QMainWindow):
                     other.moveBy(delta_scene.x(), delta_scene.y())
 
         if moved_count > 0 and not self._is_loading:
-            if debug_nudge:
-                print(f"[NUDGE] moved {moved_count} item(s)")
             self.save_undo_state()
-        elif debug_nudge:
-            print("[NUDGE] nothing moved")
 
     def rotate_selected_90(self):
         """Rotate all selected items 90° CW around the group centroid, preserving relative positions."""
@@ -1383,14 +1355,25 @@ class LegoDesigner(QMainWindow):
             if isinstance(item, LaserPath):
                 item.normalize_to_center_orientation()
 
-        # Collect scene centers and use centroid as pivot (stable across rotations; bbox center would drift)
-        centers = []
-        for item in selected:
-            if isinstance(item, (DraggableElement, CanvasTextItem)):
-                sc = item.mapToScene(item.boundingRect().center())
-            else:
-                sc = item.mapToScene(item.line().center())
-            centers.append(sc)
+        # Reference point per item: hole 0 if DraggableElement has holes, else center. Pivot = centroid of these.
+        def get_ref(item):
+            if isinstance(item, DraggableElement):
+                if item.holes:
+                    ref_local = item.holes[0]
+                    ref_scene = item.mapToScene(ref_local)
+                else:
+                    ref_local = item.boundingRect().center()
+                    ref_scene = item.mapToScene(ref_local)
+                return ref_scene, ref_local
+            if isinstance(item, CanvasTextItem):
+                ref_local = item.boundingRect().center()
+                return item.mapToScene(ref_local), ref_local
+            # LaserPath
+            ref_local = item.line().center()
+            return item.mapToScene(ref_local), ref_local
+
+        refs = [get_ref(item) for item in selected]
+        centers = [r[0] for r in refs]
         cx = sum(p.x() for p in centers) / len(centers)
         cy = sum(p.y() for p in centers) / len(centers)
 
@@ -1398,30 +1381,25 @@ class LegoDesigner(QMainWindow):
         def rotate_90_cw(sc_x, sc_y):
             return QPointF(cx + (sc_y - cy), cy - (sc_x - cx))
 
-        # Offset for pos(): DraggableElement uses setTransformOriginPoint(center), so scene center = pos() + local_center (pivot fixed, no rotation of offset).
-        # LaserPath has local_center=(0,0). CanvasTextItem: use rotated offset if origin at (0,0).
-        def offset_for_pos(item, local_center, new_rot_deg):
+        # Offset for pos(): pivot in scene = pos() + ref_local for DraggableElement (transform origin at ref).
+        # LaserPath has ref_local=(0,0). CanvasTextItem: pos() + R(rot)*ref_local.
+        def offset_for_pos(item, ref_local, new_rot_deg):
             if isinstance(item, DraggableElement):
-                return local_center  # transform origin at center → center in scene is pos() + local_center
+                return ref_local
             if isinstance(item, LaserPath):
                 return QPointF(0, 0)
-            # CanvasTextItem: default origin (0,0) → center in scene is pos() + R(rot)*local_center
             t = QTransform().rotate(new_rot_deg)
-            return t.map(local_center)
+            return t.map(ref_local)
 
-        for item in selected:
-            if isinstance(item, (DraggableElement, CanvasTextItem)):
-                scene_center = item.mapToScene(item.boundingRect().center())
-                local_center = item.boundingRect().center()
-            else:
-                assert isinstance(item, LaserPath)
-                scene_center = item.mapToScene(item.line().center())
-                local_center = item.line().center()
-            new_scene_center = rotate_90_cw(scene_center.x(), scene_center.y())
-            # LaserPath: arrow points +x in item coords; subtract 90 so arrow rotates 90° CW with group (Qt +angle = CCW)
-            new_rot = (item.rotation() - 90) if isinstance(item, LaserPath) else (item.rotation() + 90)
-            offset_pt = offset_for_pos(item, local_center, new_rot)
-            new_pos = new_scene_center - offset_pt
+        for item, (ref_scene, ref_local) in zip(selected, refs):
+            # DraggableElement: set transform origin to ref (hole 0 or center) so rotation is around it
+            if isinstance(item, DraggableElement):
+                item.setTransformOriginPoint(ref_local)
+            new_ref = rotate_90_cw(ref_scene.x(), ref_scene.y())
+            # Use -90 for all: Qt positive angle = CCW, so -90 = 90° CW; matches rotate_90_cw and keeps arrows correct
+            new_rot = item.rotation() - 90
+            offset_pt = offset_for_pos(item, ref_local, new_rot)
+            new_pos = new_ref - offset_pt
             item.setRotation(new_rot)
             item.setPos(new_pos)
 
