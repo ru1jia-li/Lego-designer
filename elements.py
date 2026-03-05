@@ -57,6 +57,7 @@ class _EndpointHandle(QGraphicsEllipseItem):
                 snapped = v.snap_laser_to_fine_grid(self.pos())
                 self.setPos(snapped)
                 self._update_laser_endpoint(snapped)
+                self._lp.normalize_to_center_orientation()
                 break
         # Re-enable parent's movability
         self._lp.setFlag(self._lp.GraphicsItemFlag.ItemIsMovable, True)
@@ -72,6 +73,9 @@ class _EndpointHandle(QGraphicsEllipseItem):
 # LaserPath
 # ─────────────────────────────────────────────────────────────────────────────
 class LaserPath(QGraphicsLineItem):
+    """Line segment defined by position (scene center), length, and orientation (rotation).
+    Internal: line is always (-L/2, 0)-(L/2, 0); pos = center; rotation = angle in scene."""
+
     def __init__(self, line, color=QColor(255, 0, 0, 180), has_arrow=True):
         super().__init__(line)
         self.color = color
@@ -82,6 +86,39 @@ class LaserPath(QGraphicsLineItem):
                       | self.GraphicsItemFlag.ItemIsMovable
                       | self.GraphicsItemFlag.ItemSendsGeometryChanges)
         self._handles: list[_EndpointHandle] = []
+
+    @classmethod
+    def from_scene_endpoints(cls, p1: QPointF, p2: QPointF, color=QColor(255, 0, 0, 180), has_arrow=True):
+        """Create a LaserPath in position+orientation form: center at (p1+p2)/2, line along x-axis, rotation = angle."""
+        cx = (p1.x() + p2.x()) / 2
+        cy = (p1.y() + p2.y()) / 2
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        length = math.hypot(dx, dy)
+        if length < 1e-6:
+            length = 1e-6
+        angle_deg = math.degrees(math.atan2(dy, dx))
+        line = QLineF(-length / 2, 0, length / 2, 0)
+        lp = cls(line, color, has_arrow)
+        lp.setPos(QPointF(cx, cy))
+        lp.setRotation(angle_deg)
+        return lp
+
+    def normalize_to_center_orientation(self):
+        """Convert to position+orientation form: pos = scene center, line = (-L/2,0)-(L/2,0), rotation = scene angle."""
+        p1 = self.mapToScene(self.line().p1())
+        p2 = self.mapToScene(self.line().p2())
+        cx = (p1.x() + p2.x()) / 2
+        cy = (p1.y() + p2.y()) / 2
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        length = math.hypot(dx, dy)
+        if length < 1e-6:
+            length = 1e-6
+        angle_deg = math.degrees(math.atan2(dy, dx))
+        self.setPos(QPointF(cx, cy))
+        self.setLine(QLineF(-length / 2, 0, length / 2, 0))
+        self.setRotation(angle_deg)
 
     # ── Handle management ─────────────────────────────────────────────────
     def _show_handles(self):

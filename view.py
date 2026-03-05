@@ -1,3 +1,4 @@
+import math
 from PyQt6.QtWidgets import QGraphicsView
 from PyQt6.QtCore import Qt, QLineF, QRectF, QPointF
 from PyQt6.QtGui import QColor
@@ -110,8 +111,8 @@ class CustomGraphicsView(QGraphicsView):
             self.erase_at_pos(event.position().toPoint())
             return
 
-        # --- DRAW MODE (LASER) ---
-        if self.main_app.draw_mode:
+        # --- DRAW MODE (LASER) — left-click only so right-click can do rubber-band ---
+        if self.main_app.draw_mode and event.button() == Qt.MouseButton.LeftButton:
             self._is_drawing = True
 
             # Convert → snap
@@ -119,8 +120,8 @@ class CustomGraphicsView(QGraphicsView):
             scene_pt = self.snap_laser_to_fine_grid(scene_pt) 
 
 
-            self._temp_line = LaserPath(
-                QLineF(scene_pt, scene_pt),
+            self._temp_line = LaserPath.from_scene_endpoints(
+                scene_pt, scene_pt,
                 QColor(self.main_app.current_laser_color),
                 self.main_app.arrow_check.isChecked()
             )
@@ -163,7 +164,16 @@ class CustomGraphicsView(QGraphicsView):
             # CHANGE THIS LINE:
             scene_pt = self.snap_laser_to_fine_grid(scene_pt)
             
-            self._temp_line.setLine(QLineF(self._temp_line.line().p1(), scene_pt))
+            # Keep building line; will normalize on release
+            p1 = self._temp_line.mapToScene(self._temp_line.line().p1())
+            self._temp_line.setLine(QLineF(-1, 0, 1, 0))  # placeholder
+            self._temp_line.setPos(QPointF((p1.x() + scene_pt.x()) / 2, (p1.y() + scene_pt.y()) / 2))
+            dx = scene_pt.x() - p1.x()
+            dy = scene_pt.y() - p1.y()
+            length = max(math.hypot(dx, dy), 1e-6)
+            angle_deg = math.degrees(math.atan2(dy, dx))
+            self._temp_line.setLine(QLineF(-length / 2, 0, length / 2, 0))
+            self._temp_line.setRotation(angle_deg)
             return
         super().mouseMoveEvent(event)
 

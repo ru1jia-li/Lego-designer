@@ -1371,9 +1371,59 @@ class LegoDesigner(QMainWindow):
             print("[NUDGE] nothing moved")
 
     def rotate_selected_90(self):
-        for i in self.scene.selectedItems():
-            if isinstance(i, DraggableElement):
-                i.setRotation(i.rotation() + 90)
+        """Rotate all selected items 90° CW around the group centroid, preserving relative positions."""
+        selected = [
+            i for i in self.scene.selectedItems()
+            if isinstance(i, (DraggableElement, LaserPath, CanvasTextItem))
+        ]
+        if not selected:
+            return
+        # Normalize LaserPaths to position+orientation form so each has distinct pos and correct orientation.
+        for item in selected:
+            if isinstance(item, LaserPath):
+                item.normalize_to_center_orientation()
+
+        # Collect scene centers and use centroid as pivot (stable across rotations; bbox center would drift)
+        centers = []
+        for item in selected:
+            if isinstance(item, (DraggableElement, CanvasTextItem)):
+                sc = item.mapToScene(item.boundingRect().center())
+            else:
+                sc = item.mapToScene(item.line().center())
+            centers.append(sc)
+        cx = sum(p.x() for p in centers) / len(centers)
+        cy = sum(p.y() for p in centers) / len(centers)
+
+        # 90° CW around (cx, cy): (x, y) -> (cx + (y - cy), cy - (x - cx))
+        def rotate_90_cw(sc_x, sc_y):
+            return QPointF(cx + (sc_y - cy), cy - (sc_x - cx))
+
+        # Offset for pos(): DraggableElement uses setTransformOriginPoint(center), so scene center = pos() + local_center (pivot fixed, no rotation of offset).
+        # LaserPath has local_center=(0,0). CanvasTextItem: use rotated offset if origin at (0,0).
+        def offset_for_pos(item, local_center, new_rot_deg):
+            if isinstance(item, DraggableElement):
+                return local_center  # transform origin at center → center in scene is pos() + local_center
+            if isinstance(item, LaserPath):
+                return QPointF(0, 0)
+            # CanvasTextItem: default origin (0,0) → center in scene is pos() + R(rot)*local_center
+            t = QTransform().rotate(new_rot_deg)
+            return t.map(local_center)
+
+        for item in selected:
+            if isinstance(item, (DraggableElement, CanvasTextItem)):
+                scene_center = item.mapToScene(item.boundingRect().center())
+                local_center = item.boundingRect().center()
+            else:
+                assert isinstance(item, LaserPath)
+                scene_center = item.mapToScene(item.line().center())
+                local_center = item.line().center()
+            new_scene_center = rotate_90_cw(scene_center.x(), scene_center.y())
+            new_rot = item.rotation() + 90
+            offset_pt = offset_for_pos(item, local_center, new_rot)
+            new_pos = new_scene_center - offset_pt
+            item.setRotation(new_rot)
+            item.setPos(new_pos)
+
         self.save_undo_state()
 
     def rotate_canvas_90(self):
@@ -1398,12 +1448,12 @@ class LegoDesigner(QMainWindow):
                     "z": item.zValue(),
                 })
             elif isinstance(item, LaserPath):
+                p1 = item.mapToScene(item.line().p1())
+                p2 = item.mapToScene(item.line().p2())
                 self._clipboard.append({
                     "t": "l",
-                    "x1": item.line().x1(),
-                    "y1": item.line().y1(),
-                    "x2": item.line().x2(),
-                    "y2": item.line().y2(),
+                    "x1": p1.x(), "y1": p1.y(),
+                    "x2": p2.x(), "y2": p2.y(),
                     "c": item.color.name(QColor.NameFormat.HexArgb),
                     "a": item.has_arrow,
                 })
@@ -1427,12 +1477,9 @@ class LegoDesigner(QMainWindow):
                 item.setSelected(True)
                 item.snapping_enabled = True
             elif d["t"] == "l":
-                lp = LaserPath(
-                    QLineF(d["x1"] + offset, d["y1"] + offset,
-                           d["x2"] + offset, d["y2"] + offset),
-                    QColor(d["c"]),
-                    d.get("a", True),
-                )
+                p1 = QPointF(d["x1"] + offset, d["y1"] + offset)
+                p2 = QPointF(d["x2"] + offset, d["y2"] + offset)
+                lp = LaserPath.from_scene_endpoints(p1, p2, QColor(d["c"]), d.get("a", True))
                 lp.color = QColor(d["c"])
                 lp.setPen(QPen(lp.color, 7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
                 self.scene.addItem(lp)
@@ -1545,12 +1592,12 @@ class LegoDesigner(QMainWindow):
                     "z": i.zValue(),
                 })
             elif isinstance(i, LaserPath):
+                p1 = i.mapToScene(i.line().p1())
+                p2 = i.mapToScene(i.line().p2())
                 items_list.append({
                     "t": "l",
-                    "x1": i.line().x1(),
-                    "y1": i.line().y1(),
-                    "x2": i.line().x2(),
-                    "y2": i.line().y2(),
+                    "x1": p1.x(), "y1": p1.y(),
+                    "x2": p2.x(), "y2": p2.y(),
                     "c": i.color.name(QColor.NameFormat.HexArgb),
                     "a": i.has_arrow,
                 })
@@ -1601,11 +1648,11 @@ class LegoDesigner(QMainWindow):
                            "x": round(item.pos().x(), 1),
                            "y": round(item.pos().y(), 1)}
                 elif isinstance(item, LaserPath):
+                    p1 = item.mapToScene(item.line().p1())
+                    p2 = item.mapToScene(item.line().p2())
                     key = {"kt": "l",
-                           "x1": round(item.line().x1(), 1),
-                           "y1": round(item.line().y1(), 1),
-                           "x2": round(item.line().x2(), 1),
-                           "y2": round(item.line().y2(), 1)}
+                           "x1": round(p1.x(), 1), "y1": round(p1.y(), 1),
+                           "x2": round(p2.x(), 1), "y2": round(p2.y(), 1)}
                 elif isinstance(item, CanvasTextItem):
                     key = {"kt": "text",
                            "x": round(item.pos().x(), 1),
@@ -1736,10 +1783,9 @@ class LegoDesigner(QMainWindow):
                                    Qt.PenCapStyle.RoundCap))
                 else:
                     saved_color = QColor(d.get("c", "#FF0000"))
-                    lp = LaserPath(
-                        QLineF(d["x1"], d["y1"], d["x2"], d["y2"]),
-                        saved_color,
-                        d.get("a", True),
+                    lp = LaserPath.from_scene_endpoints(
+                        QPointF(d["x1"], d["y1"]), QPointF(d["x2"], d["y2"]),
+                        saved_color, d.get("a", True),
                     )
                     lp.color = saved_color
                     lp.setPen(QPen(saved_color, 7, Qt.PenStyle.SolidLine,
@@ -2670,7 +2716,9 @@ class LegoDesigner(QMainWindow):
                 color     = QColor(hex_col)
                 color.setAlpha(alpha)
                 has_arrow = poly_el is not None
-                lp = LaserPath(QLineF(x1, y1, x2, y2), color, has_arrow)
+                lp = LaserPath.from_scene_endpoints(
+                    QPointF(x1, y1), QPointF(x2, y2), color, has_arrow,
+                )
                 lp.color = color
                 lp.setPen(QPen(color, 7, Qt.PenStyle.SolidLine,
                                Qt.PenCapStyle.RoundCap))
