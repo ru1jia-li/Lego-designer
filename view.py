@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QGraphicsView
-from PyQt6.QtCore import Qt, QLineF, QRectF
+from PyQt6.QtCore import Qt, QLineF, QRectF, QPointF
 from PyQt6.QtGui import QColor
 from elements import LaserPath
 
@@ -194,6 +194,21 @@ class CustomGraphicsView(QGraphicsView):
                 else:
                     self.main_app.save_undo_state()
             self._temp_line = None
+
+        # When finishing a rubber-band drag, explicitly select every item whose bbox intersects the rect
+        # so that "everything in the box" is selected (Qt's default can miss some items).
+        if self.dragMode() == QGraphicsView.DragMode.RubberBandDrag:
+            vp_rect = self.rubberBandRect()
+            if not vp_rect.isEmpty():
+                tl = self.mapToScene(vp_rect.topLeft())
+                br = self.mapToScene(vp_rect.bottomRight())
+                scene_rect = QRectF(tl, br).normalized()
+                self.scene().clearSelection()
+                for item in self.scene().items(scene_rect):
+                    if item == getattr(self.main_app, "breadboard", None):
+                        continue
+                    if item.flags() & item.GraphicsItemFlag.ItemIsSelectable:
+                        item.setSelected(True)
 
         self._is_panning = self._is_drawing = self._is_erasing = False
         self.setDragMode(QGraphicsView.DragMode.NoDrag)

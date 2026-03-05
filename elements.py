@@ -135,6 +135,7 @@ class LaserPath(QGraphicsLineItem):
         scene = self.scene()
         views = scene.views() if scene else []
         view = next((v for v in views if hasattr(v, 'snap_laser_to_fine_grid')), None)
+        offset = QPointF(0, 0)
         # Snap the first endpoint to the fine grid and shift the whole item
         # by the resulting offset — preserves line length and angle exactly.
         if view:
@@ -142,6 +143,13 @@ class LaserPath(QGraphicsLineItem):
             p1_snapped = view.snap_laser_to_fine_grid(p1_scene)
             offset = p1_snapped - p1_scene
             self.moveBy(offset.x(), offset.y())
+
+        # If multiple selected, move all others by the same offset (snap one, keep group aligned)
+        selected = scene.selectedItems() if scene else []
+        if len(selected) > 1 and (offset.x() != 0 or offset.y() != 0):
+            for item in selected:
+                if item is not self and isinstance(item, (DraggableElement, LaserPath, CanvasTextItem)):
+                    item.setPos(item.pos() + offset)
 
         self._position_handles()
 
@@ -411,7 +419,22 @@ class DraggableElement(QGraphicsSvgItem):
             super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self.snapping_enabled: self.snap_to_grid()
+        scene = self.scene()
+        selected = scene.selectedItems() if scene else []
+        if len(selected) > 1:
+            # Snap only this item, then move all others by the same delta (keeps group aligned)
+            old_pos = self.pos()
+            if self.snapping_enabled:
+                self.snap_to_grid()
+            delta = self.pos() - old_pos
+            for item in selected:
+                if item is self:
+                    continue
+                if isinstance(item, (DraggableElement, LaserPath, CanvasTextItem)):
+                    item.setPos(item.pos() + delta)
+        else:
+            if self.snapping_enabled:
+                self.snap_to_grid()
         # Restore z from the canvas tree so layer order is respected
         if hasattr(self.parent_app, '_sync_z_order'):
             self.parent_app._sync_z_order()

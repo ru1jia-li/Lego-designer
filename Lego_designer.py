@@ -1125,7 +1125,7 @@ class LegoDesigner(QMainWindow):
         if debug_nudge:
             print(f"[NUDGE] called with dx={dx}, dy={dy}")
 
-        items = self.scene.selectedItems()
+        items = [i for i in self.scene.selectedItems() if isinstance(i, (DraggableElement, LaserPath, CanvasTextItem))]
         if not items:
             if debug_nudge:
                 print("[NUDGE] no items selected")
@@ -1138,7 +1138,22 @@ class LegoDesigner(QMainWindow):
                 print("[NUDGE] no grids available")
             return
 
+        # Pick one anchor: nudge only it, then apply same delta to all others (group nudge)
+        anchor = None
+        for i in items:
+            if isinstance(i, DraggableElement) and has_elem_grid and i.holes:
+                anchor = i
+                break
+        if anchor is None:
+            for i in items:
+                if isinstance(i, LaserPath) and has_laser_grid:
+                    anchor = i
+                    break
+        if anchor is None:
+            return
+
         moved_count = 0
+        delta_scene = QPointF(0, 0)
 
         # Tolerance for "same column/row" in cardinal directions
         ALIGN_TOL = 6.0
@@ -1147,6 +1162,8 @@ class LegoDesigner(QMainWindow):
         DIAGONAL_BALANCE_TOL = 0.35
 
         for item in items:
+            if item is not anchor:
+                continue
             # ---------------------------------------------------------
             # DraggableElement nudge (breadboard hole grid)
             # ---------------------------------------------------------
@@ -1309,6 +1326,16 @@ class LegoDesigner(QMainWindow):
                     moved_count += 1
                 if debug_nudge:
                     print(f"[NUDGE] moved laser by ({delta_scene.x():.1f}, {delta_scene.y():.1f})")
+
+        # Apply same delta to all other selected items (group nudge)
+        if moved_count > 0 and (delta_scene.x() != 0 or delta_scene.y() != 0):
+            for other in items:
+                if other is anchor:
+                    continue
+                if isinstance(other, (DraggableElement, CanvasTextItem)):
+                    other.setPos(other.pos() + delta_scene)
+                elif isinstance(other, LaserPath):
+                    other.moveBy(delta_scene.x(), delta_scene.y())
 
         if moved_count > 0 and not self._is_loading:
             if debug_nudge:
