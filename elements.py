@@ -336,8 +336,12 @@ class CanvasTextItem(QGraphicsTextItem):
 
 
 class DraggableElement(QGraphicsSvgItem):
-    def __init__(self, svg_path, name, parent_app):
-        super().__init__(svg_path)
+    def __init__(self, svg_path, name, parent_app, renderer=None):
+        if renderer is not None:
+            super().__init__()
+            self.setSharedRenderer(renderer)
+        else:
+            super().__init__(svg_path)
         self.file_path, self.name, self.parent_app = svg_path, name, parent_app
         self.holes = []
         self.snapping_enabled = True

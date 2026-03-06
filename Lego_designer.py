@@ -994,26 +994,28 @@ class LegoDesigner(QMainWindow):
     #   HOLE PATTERN (JSON) FOR PARTS
     # =============================================================
     def load_hole_pattern(self, svg_path):
-        try:
-            with open(os.path.join(self.icons_root, "hole_database.json"), "r") as f:
-                db = json.load(f)
-        except: return []
+        # Cache hole_database.json in memory — load_state calls this hundreds of times per undo
+        if not hasattr(self, "_hole_db_cache") or self._hole_db_cache is None:
+            try:
+                with open(os.path.join(self.icons_root, "hole_database.json"), "r") as f:
+                    self._hole_db_cache = json.load(f)
+            except Exception:
+                self._hole_db_cache = {}
+        db = self._hole_db_cache
 
         key = os.path.basename(svg_path)
-        if key not in db: return []
+        if key not in db:
+            return []
 
-        holes = []
-        # Create a dummy item just to use its mapToScene capability
-        # This ensures we use the item's NATURAL coordinate system
-        temp_item = QGraphicsSvgItem(svg_path)
-        
-        for h in db[key]:
-            # NO MORE sx or sy multiplication. 
-            # We use the raw numbers from the JSON database.
-            lx, ly = float(h["x"]), float(h["y"])
-            holes.append(QPointF(lx, ly))
-        return holes
+        return [QPointF(float(h["x"]), float(h["y"])) for h in db[key]]
 
+    def _get_svg_renderer(self, svg_path):
+        """Cache QSvgRenderer per path — load_state creates hundreds of elements sharing few paths."""
+        if not hasattr(self, "_svg_renderer_cache"):
+            self._svg_renderer_cache = {}
+        if svg_path not in self._svg_renderer_cache:
+            self._svg_renderer_cache[svg_path] = QSvgRenderer(svg_path)
+        return self._svg_renderer_cache[svg_path]
 
     def calculate_grid_spacing(self):
         if len(self.breadboard_holes) < 2:
@@ -1681,103 +1683,43 @@ class LegoDesigner(QMainWindow):
             layer_structure = snapshot.get("layers")
             active_layer = snapshot.get("active_layer", self._active_layer_name)
 
-        # ── Key helpers (must match _encode_layer_structure) ──────────────────
-        def _elem_key(d):
-            return ("i", d["p"], round(d["x"], 1), round(d["y"], 1))
-
-        def _laser_key(d):
-            return ("l", round(d["x1"], 1), round(d["y1"], 1),
-                         round(d["x2"], 1), round(d["y2"], 1))
-
-        def _text_key(d):
-            return ("text", round(d["x"], 1), round(d["y"], 1), (d.get("content") or "")[:50])
-
-        def _item_key(qt_item):
-            if isinstance(qt_item, DraggableElement):
-                return ("i", qt_item.file_path,
-                        round(qt_item.pos().x(), 1),
-                        round(qt_item.pos().y(), 1))
-            elif isinstance(qt_item, LaserPath):
-                ln = qt_item.line()
-                return ("l", round(ln.x1(), 1), round(ln.y1(), 1),
-                             round(ln.x2(), 1), round(ln.y2(), 1))
-            elif isinstance(qt_item, CanvasTextItem):
-                return ("text", round(qt_item.pos().x(), 1), round(qt_item.pos().y(), 1),
-                        (qt_item.toPlainText() or "")[:50])
-            return None
-
-        # ── Build lookup of current live items ────────────────────────────────
-        live: dict = {}
-        for qt_item in self.scene.items():
+        # ── Clear all live items and recreate from snapshot ───────────────────
+        # Key-based reconciliation is unreliable when many items share the same
+        # SVG path at close positions (colliding keys). Always do a clean rebuild.
+        for qt_item in list(self.scene.items()):
             if isinstance(qt_item, (DraggableElement, LaserPath, CanvasTextItem)):
-                k = _item_key(qt_item)
-                if k is not None:
-                    live[k] = qt_item
+                self.scene.removeItem(qt_item)
 
-        # ── Reconcile: update in-place or create; collect what to keep ────────
-        snapshot_keys: set = set()
         reconstructed: list[tuple[dict, object]] = []
 
         for d in items_list:
             if d["t"] == "i":
-                k = _elem_key(d)
-                snapshot_keys.add(k)
-                if k in live:
-                    # Item already exists at the right place — just update props
-                    item = live[k]
-                    item.snapping_enabled = False
-                    item.setRotation(d["r"])
-                    item.setZValue(d.get("z", 5))
-                    item.snapping_enabled = True
-                else:
-                    # New or moved item — create it
-                    item = DraggableElement(d["p"], "item", self)
-                    item.holes = self.load_hole_pattern(d["p"])
-                    item.snapping_enabled = False
-                    item.setPos(d["x"], d["y"])
-                    item.setRotation(d["r"])
-                    item.setZValue(d.get("z", 5))
-                    self.scene.addItem(item)
-                    item.snapping_enabled = True
+                renderer = self._get_svg_renderer(d["p"])
+                item = DraggableElement(d["p"], "item", self, renderer=renderer)
+                item.holes = self.load_hole_pattern(d["p"])
+                item.snapping_enabled = False
+                item.setPos(d["x"], d["y"])
+                item.setRotation(d["r"])
+                item.setZValue(d.get("z", 5))
+                self.scene.addItem(item)
+                item.snapping_enabled = True
                 reconstructed.append((d, item))
             elif d["t"] == "text":
-                k = _text_key(d)
-                snapshot_keys.add(k)
-                if k in live:
-                    txt = live[k]
-                    txt.setPlainText(d.get("content") or "")
-                    txt.setPos(d["x"], d["y"])
-                else:
-                    txt = CanvasTextItem(d.get("content") or "Text", self)
-                    txt.setPos(d["x"], d["y"])
-                    self.scene.addItem(txt)
+                txt = CanvasTextItem(d.get("content") or "Text", self)
+                txt.setPos(d["x"], d["y"])
+                self.scene.addItem(txt)
                 reconstructed.append((d, txt))
             else:
-                k = _laser_key(d)
-                snapshot_keys.add(k)
-                if k in live:
-                    lp = live[k]
-                    saved_color = QColor(d.get("c", "#FF0000"))
-                    lp.color = saved_color
-                    lp.has_arrow = d.get("a", True)
-                    lp.setPen(QPen(saved_color, 7, Qt.PenStyle.SolidLine,
-                                   Qt.PenCapStyle.RoundCap))
-                else:
-                    saved_color = QColor(d.get("c", "#FF0000"))
-                    lp = LaserPath.from_scene_endpoints(
-                        QPointF(d["x1"], d["y1"]), QPointF(d["x2"], d["y2"]),
-                        saved_color, d.get("a", True),
-                    )
-                    lp.color = saved_color
-                    lp.setPen(QPen(saved_color, 7, Qt.PenStyle.SolidLine,
-                                   Qt.PenCapStyle.RoundCap))
-                    self.scene.addItem(lp)
+                saved_color = QColor(d.get("c", "#FF0000"))
+                lp = LaserPath.from_scene_endpoints(
+                    QPointF(d["x1"], d["y1"]), QPointF(d["x2"], d["y2"]),
+                    saved_color, d.get("a", True),
+                )
+                lp.color = saved_color
+                lp.setPen(QPen(saved_color, 7, Qt.PenStyle.SolidLine,
+                               Qt.PenCapStyle.RoundCap))
+                self.scene.addItem(lp)
                 reconstructed.append((d, lp))
-
-        # ── Remove items that are no longer in the snapshot ───────────────────
-        for k, qt_item in live.items():
-            if k not in snapshot_keys:
-                self.scene.removeItem(qt_item)
 
         # ── Restore layer structure ───────────────────────────────────────────
         self._active_layer_name = active_layer
