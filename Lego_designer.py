@@ -813,7 +813,13 @@ class LegoDesigner(QMainWindow):
                                                  QSizePolicy.Policy.Expanding)
                 self._layers_panel.setMaximumHeight(16777215)
                 self._left_splitter.setMaximumHeight(16777215)
-                self._left_splitter.setSizes([1000, 1000])
+                # Restore same 50/50 default as startup instead of fixed 1000,1000 (avoids bouncing too high)
+                h = self._left_splitter.height()
+                if h > 100:
+                    half = h // 2
+                    self._left_splitter.setSizes([half, h - half])
+                else:
+                    self._left_splitter.setSizes([1000, 1000])
             else:
                 header_h = self._btn_layers_toggle.sizeHint().height() + 12
                 self._layers_panel.setSizePolicy(QSizePolicy.Policy.Preferred,
