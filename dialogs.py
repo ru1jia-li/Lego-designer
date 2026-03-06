@@ -28,10 +28,6 @@ class PropertyPopup(QDialog):
         angle_layout.addWidget(self.angle_input)
         layout.addLayout(angle_layout)
         
-        self.front_check = QCheckBox("Bring to Front")
-        self.front_check.setChecked(self.item.zValue() >= 10)
-        layout.addWidget(self.front_check)
-        
         self.snap_check = QCheckBox("Snap to Grid")
         self.snap_check.setChecked(self.item.snapping_enabled)
         layout.addWidget(self.snap_check)
@@ -43,7 +39,6 @@ class PropertyPopup(QDialog):
     def apply_properties(self):
         try:
             self.item.setRotation(float(self.angle_input.text()))
-            self.item.setZValue(15 if self.front_check.isChecked() else 5)
             self.item.snapping_enabled = self.snap_check.isChecked()
             if self.item.snapping_enabled: self.item.snap_to_grid()
             if self.main_app: self.main_app.save_undo_state()
