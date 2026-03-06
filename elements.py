@@ -120,6 +120,14 @@ class LaserPath(QGraphicsLineItem):
         self.setLine(QLineF(-length / 2, 0, length / 2, 0))
         self.setRotation(angle_deg)
 
+    def boundingRect(self):
+        """Include arrow in invalidation so moving the item clears the old arrow (no shadow)."""
+        pen_w = max(1, self.pen().widthF())
+        line = self.line()
+        base = QRectF(line.p1(), line.p2()).normalized().adjusted(-pen_w, -pen_w, pen_w, pen_w)
+        arrow_margin = 16  # arrow_size/2 = 15, use 16 for safety
+        return base.adjusted(-arrow_margin, -arrow_margin, arrow_margin, arrow_margin)
+
     # ── Handle management ─────────────────────────────────────────────────
     def _show_handles(self):
         if self._handles:
