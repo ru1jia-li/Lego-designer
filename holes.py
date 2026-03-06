@@ -184,6 +184,11 @@ class HoleManagerDialog(QDialog):
         self.view.viewport().installEventFilter(self)
         self.view.setMouseTracking(True)
 
+        # Backspace = trash (delete selected holes)
+        shortcut_del = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        shortcut_del.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut_del.activated.connect(self.delete_selected)
+
         # Floating vertical circular toolbar on top-left
         self.floating_tools = QWidget(self.view.viewport())
         self.floating_tools.setStyleSheet("""

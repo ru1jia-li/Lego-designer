@@ -489,6 +489,7 @@ class DraggableElement(QGraphicsSvgItem):
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            # 90° clockwise
             self.setRotation(self.rotation() + 90)
             if not self.parent_app._is_loading: self.parent_app.save_undo_state()
         super().mouseDoubleClickEvent(event)
