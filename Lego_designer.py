@@ -2219,7 +2219,11 @@ class LegoDesigner(QMainWindow):
         self.draw_mode = False
         self.btn_draw.setChecked(False)
         self.btn_sel.setChecked(not self.eraser_mode)
-        self.pen_options_box.hide()
+        # Keep pen_options_box visibility driven by selection (show when lasers selected)
+        if not self.eraser_mode:
+            self.pen_options_box.setVisible(False)
+        else:
+            self._on_selection_changed()
 
     # =============================================================
     #   SCENE ITEM MANAGEMENT
@@ -2425,8 +2429,7 @@ class LegoDesigner(QMainWindow):
         self.opacity_input.setText("100")
         self._block_laser_controls(False)
         self.update_laser_opacity_ui()
-        if not self.draw_mode:
-            self._apply_to_selected_lasers(color=new_col, alpha=255)
+        self._apply_to_selected_lasers(color=new_col, alpha=255)
 
     def update_laser_opacity_from_slider(self, value):
         self.current_laser_color.setAlpha(value)
@@ -2435,8 +2438,7 @@ class LegoDesigner(QMainWindow):
         self.opacity_input.setText(str(percent))
         self.opacity_input.blockSignals(False)
         self.update_laser_opacity_ui()
-        if not self.draw_mode:
-            self._apply_to_selected_lasers(alpha=value)
+        self._apply_to_selected_lasers(alpha=value)
 
     def update_laser_opacity_from_input(self, text):
         try:
@@ -2448,8 +2450,7 @@ class LegoDesigner(QMainWindow):
             self.opacity_slider.setValue(alpha)
             self.opacity_slider.blockSignals(False)
             self.update_laser_opacity_ui()
-            if not self.draw_mode:
-                self._apply_to_selected_lasers(alpha=alpha)
+            self._apply_to_selected_lasers(alpha=alpha)
         except ValueError:
             pass
 
@@ -2463,20 +2464,18 @@ class LegoDesigner(QMainWindow):
         )
 
     def _on_arrow_toggled(self, checked: bool):
-        if not self.draw_mode:
-            self._apply_to_selected_lasers(has_arrow=checked)
+        self._apply_to_selected_lasers(has_arrow=checked)
 
     def pick_color(self):
         # Seed dialog from first selected laser if in selection mode
         lasers = self._selected_lasers()
-        seed = lasers[0].color if (not self.draw_mode and lasers) else self.current_laser_color
+        seed = lasers[0].color if lasers else self.current_laser_color
         col = QColorDialog.getColor(seed, self, "Select Laser Color")
         if col.isValid():
             alpha = seed.alpha()
             col.setAlpha(alpha)
             self.set_laser_color(col)
-            if not self.draw_mode:
-                self._apply_to_selected_lasers(color=col)
+            self._apply_to_selected_lasers(color=col)
 
 
     # =============================================================
