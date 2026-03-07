@@ -491,13 +491,22 @@ class DraggableElement(QGraphicsSvgItem):
         else:
             self.setZValue(getattr(self, '_drag_z', 5))
         super().mouseReleaseEvent(event)
-        # Save exactly once, after snap — this is the only undo point per move
+        # Defer save so double-click rotation can save once and we skip the release save
         if not self.parent_app._is_loading:
-            self.parent_app.save_undo_state()
+            QTimer.singleShot(300, self._deferred_save_after_release)
+
+    def _deferred_save_after_release(self):
+        if getattr(self, "_double_click_just_saved", False):
+            QTimer.singleShot(400, lambda: setattr(self, "_double_click_just_saved", False))
+            return
+        self._double_click_just_saved = False
+        self.parent_app.save_undo_state()
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             # 90° clockwise
             self.setRotation(self.rotation() + 90)
-            if not self.parent_app._is_loading: self.parent_app.save_undo_state()
+            if not self.parent_app._is_loading:
+                self._double_click_just_saved = True
+                self.parent_app.save_undo_state()
         super().mouseDoubleClickEvent(event)

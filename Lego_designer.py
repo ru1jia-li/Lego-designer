@@ -648,7 +648,9 @@ class LegoDesigner(QMainWindow):
         self.text_options_box.setStyleSheet(
             "QFrame { background: white; border: 1px solid #AAA; border-radius: 6px; } "
             "QLabel { border: none; background: transparent; } "
-            "QSpinBox { border: 2px solid #888; border-radius: 3px; padding: 2px 4px; min-height: 18px; }"
+            "QSpinBox { border: 2px solid #888; border-radius: 3px; padding: 2px 4px; min-height: 18px; } "
+            "QSpinBox::up-button { width: 20px; min-width: 20px; height: 10px; min-height: 10px; } "
+            "QSpinBox::down-button { width: 20px; min-width: 20px; height: 10px; min-height: 10px; }"
         )
         self.text_options_box.setFixedWidth(138)
         self.text_options_box.setFixedHeight(52)
@@ -1360,59 +1362,62 @@ class LegoDesigner(QMainWindow):
         ]
         if not selected:
             return
-        # Normalize LaserPaths to position+orientation form so each has distinct pos and correct orientation.
-        for item in selected:
-            if isinstance(item, LaserPath):
-                item.normalize_to_center_orientation()
+        self._suppress_undo_save = True
+        try:
+            # Normalize LaserPaths to position+orientation form so each has distinct pos and correct orientation.
+            for item in selected:
+                if isinstance(item, LaserPath):
+                    item.normalize_to_center_orientation()
 
-        # Reference point per item: hole 0 if DraggableElement has holes, else center. Pivot = centroid of these.
-        def get_ref(item):
-            if isinstance(item, DraggableElement):
-                if item.holes:
-                    ref_local = item.holes[0]
-                    ref_scene = item.mapToScene(ref_local)
-                else:
+            # Reference point per item: hole 0 if DraggableElement has holes, else center. Pivot = centroid of these.
+            def get_ref(item):
+                if isinstance(item, DraggableElement):
+                    if item.holes:
+                        ref_local = item.holes[0]
+                        ref_scene = item.mapToScene(ref_local)
+                    else:
+                        ref_local = item.boundingRect().center()
+                        ref_scene = item.mapToScene(ref_local)
+                    return ref_scene, ref_local
+                if isinstance(item, CanvasTextItem):
                     ref_local = item.boundingRect().center()
-                    ref_scene = item.mapToScene(ref_local)
-                return ref_scene, ref_local
-            if isinstance(item, CanvasTextItem):
-                ref_local = item.boundingRect().center()
+                    return item.mapToScene(ref_local), ref_local
+                # LaserPath
+                ref_local = item.line().center()
                 return item.mapToScene(ref_local), ref_local
-            # LaserPath
-            ref_local = item.line().center()
-            return item.mapToScene(ref_local), ref_local
 
-        refs = [get_ref(item) for item in selected]
-        centers = [r[0] for r in refs]
-        cx = sum(p.x() for p in centers) / len(centers)
-        cy = sum(p.y() for p in centers) / len(centers)
+            refs = [get_ref(item) for item in selected]
+            centers = [r[0] for r in refs]
+            cx = sum(p.x() for p in centers) / len(centers)
+            cy = sum(p.y() for p in centers) / len(centers)
 
-        # 90° CW around (cx, cy): (x, y) -> (cx + (y - cy), cy - (x - cx))
-        def rotate_90_cw(sc_x, sc_y):
-            return QPointF(cx + (sc_y - cy), cy - (sc_x - cx))
+            # 90° CW around (cx, cy): (x, y) -> (cx + (y - cy), cy - (x - cx))
+            def rotate_90_cw(sc_x, sc_y):
+                return QPointF(cx + (sc_y - cy), cy - (sc_x - cx))
 
-        # Offset for pos(): pivot in scene = pos() + ref_local for DraggableElement (transform origin at ref).
-        # LaserPath has ref_local=(0,0). CanvasTextItem: pos() + R(rot)*ref_local.
-        def offset_for_pos(item, ref_local, new_rot_deg):
-            if isinstance(item, DraggableElement):
-                return ref_local
-            if isinstance(item, LaserPath):
-                return QPointF(0, 0)
-            t = QTransform().rotate(new_rot_deg)
-            return t.map(ref_local)
+            # Offset for pos(): pivot in scene = pos() + ref_local for DraggableElement (transform origin at ref).
+            # LaserPath has ref_local=(0,0). CanvasTextItem: pos() + R(rot)*ref_local.
+            def offset_for_pos(item, ref_local, new_rot_deg):
+                if isinstance(item, DraggableElement):
+                    return ref_local
+                if isinstance(item, LaserPath):
+                    return QPointF(0, 0)
+                t = QTransform().rotate(new_rot_deg)
+                return t.map(ref_local)
 
-        for item, (ref_scene, ref_local) in zip(selected, refs):
-            # DraggableElement: set transform origin to ref (hole 0 or center) so rotation is around it
-            if isinstance(item, DraggableElement):
-                item.setTransformOriginPoint(ref_local)
-            new_ref = rotate_90_cw(ref_scene.x(), ref_scene.y())
-            # Use -90 for all: Qt positive angle = CCW, so -90 = 90° CW; matches rotate_90_cw and keeps arrows correct
-            new_rot = item.rotation() - 90
-            offset_pt = offset_for_pos(item, ref_local, new_rot)
-            new_pos = new_ref - offset_pt
-            item.setRotation(new_rot)
-            item.setPos(new_pos)
-
+            for item, (ref_scene, ref_local) in zip(selected, refs):
+                # DraggableElement: set transform origin to ref (hole 0 or center) so rotation is around it
+                if isinstance(item, DraggableElement):
+                    item.setTransformOriginPoint(ref_local)
+                new_ref = rotate_90_cw(ref_scene.x(), ref_scene.y())
+                # Use -90 for all: Qt positive angle = CCW, so -90 = 90° CW; matches rotate_90_cw and keeps arrows correct
+                new_rot = item.rotation() - 90
+                offset_pt = offset_for_pos(item, ref_local, new_rot)
+                new_pos = new_ref - offset_pt
+                item.setRotation(new_rot)
+                item.setPos(new_pos)
+        finally:
+            self._suppress_undo_save = False
         self.save_undo_state()
 
     def rotate_canvas_90(self):
@@ -1565,7 +1570,8 @@ class LegoDesigner(QMainWindow):
     def save_undo_state(self, initial=False):
         if self._is_loading:
             return
-
+        if getattr(self, "_suppress_undo_save", False):
+            return
         # Sync tree before snapshotting so layer structure is current
         self._rebuild_canvas_tree()
 
