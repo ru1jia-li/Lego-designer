@@ -2502,9 +2502,6 @@ class LegoDesigner(QMainWindow):
         item = DraggableElement(path, name, self)
         item.holes = self.load_hole_pattern(path)
         
-        if item.holes:
-            item.setTransformOriginPoint(item.holes[0])
-        
         # Place at center of view
         center_pos = self.view.mapToScene(self.view.viewport().rect().center())
         item.setPos(center_pos)

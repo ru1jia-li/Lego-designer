@@ -513,11 +513,16 @@ class DraggableElement(QGraphicsSvgItem):
         else:
             self.setZValue(getattr(self, '_drag_z', 5))
         super().mouseReleaseEvent(event)
-        # Defer save so double-click rotation can save once and we skip the release save
         if not self.parent_app._is_loading:
-            QTimer.singleShot(300, self._deferred_save_after_release)
+            if getattr(self, "_deferred_save_timer", None):
+                self._deferred_save_timer.stop()
+            self._deferred_save_timer = QTimer(self)
+            self._deferred_save_timer.setSingleShot(True)
+            self._deferred_save_timer.timeout.connect(self._deferred_save_after_release)
+            self._deferred_save_timer.start(300)
 
     def _deferred_save_after_release(self):
+        self._deferred_save_timer = None
         if getattr(self, "_double_click_just_saved", False):
             QTimer.singleShot(400, lambda: setattr(self, "_double_click_just_saved", False))
             return
@@ -529,6 +534,11 @@ class DraggableElement(QGraphicsSvgItem):
             # 90° clockwise
             self.setRotation(self.rotation() + 90)
             if not self.parent_app._is_loading:
+                if getattr(self, "_deferred_save_timer", None):
+                    self._deferred_save_timer.stop()
+                    self._deferred_save_timer = None
+                if self.snapping_enabled:
+                    self.snap_to_grid()
                 self._double_click_just_saved = True
                 self.parent_app.save_undo_state()
         super().mouseDoubleClickEvent(event)
