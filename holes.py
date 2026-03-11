@@ -509,6 +509,8 @@ class HoleManagerDialog(QDialog):
             
             # Refresh holes in main application immediately
             if self.parent_app:
+                # Update main app's in-memory hole cache so load_hole_pattern() returns new data
+                self.parent_app._hole_db_cache = dict(self.hole_db)
                 # Re-detect breadboard holes if the current file is the breadboard
                 bb_basename = os.path.basename(getattr(self.parent_app, "_breadboard_path", ""))
                 if key == bb_basename:
@@ -518,7 +520,7 @@ class HoleManagerDialog(QDialog):
                 # Update all existing items in the scene to reflect new hole positions
                 for item in self.parent_app.scene.items():
                     if isinstance(item, DraggableElement):
-                        # Reload hole pattern for this item type
+                        # Reload hole pattern for this item type (now uses updated cache)
                         item.holes = self.parent_app.load_hole_pattern(item.file_path)
                         # Re-snap to the potentially updated grid
                         item.snap_to_grid()
