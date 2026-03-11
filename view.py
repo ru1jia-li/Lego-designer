@@ -64,6 +64,13 @@ class CustomGraphicsView(QGraphicsView):
         is_ctrl = modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier)
 
         if is_ctrl:
+            from elements import CanvasTextItem
+            focus_item = self.scene().focusItem()
+            # When editing a text box, let Ctrl+C / Ctrl+V do text copy/paste
+            editing_text = (
+                isinstance(focus_item, CanvasTextItem)
+                and (focus_item.textInteractionFlags() & Qt.TextInteractionFlag.TextEditorInteraction)
+            )
             if event.key() == Qt.Key.Key_Z:
                 self.main_app.undo_action()
                 return
@@ -71,9 +78,15 @@ class CustomGraphicsView(QGraphicsView):
                 self.main_app.redo_action()
                 return
             elif event.key() == Qt.Key.Key_C:
+                if editing_text:
+                    super().keyPressEvent(event)
+                    return
                 self.main_app.copy_selected()
                 return
             elif event.key() == Qt.Key.Key_V:
+                if editing_text:
+                    super().keyPressEvent(event)
+                    return
                 self.main_app.paste_items()
                 return
             elif event.key() == Qt.Key.Key_G:

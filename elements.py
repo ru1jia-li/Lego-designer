@@ -1,9 +1,9 @@
 import os
 import math
 import xml.etree.ElementTree as ET
-from PyQt6.QtWidgets import QGraphicsLineItem, QGraphicsEllipseItem, QGraphicsTextItem
-from PyQt6.QtCore import Qt, QPointF, QLineF, QRectF, QTimer
-from PyQt6.QtGui import QColor, QPen, QPolygonF, QBrush, QFont, QTextCursor, QTextBlockFormat, QTextOption
+from PyQt6.QtWidgets import QGraphicsLineItem, QGraphicsEllipseItem, QGraphicsTextItem, QApplication
+from PyQt6.QtCore import Qt, QPointF, QLineF, QRectF, QTimer, QMimeData
+from PyQt6.QtGui import QColor, QPen, QPolygonF, QBrush, QFont, QTextCursor, QTextBlockFormat, QTextOption, QKeyEvent
 from PyQt6.QtSvgWidgets import QGraphicsSvgItem
 
 from dialogs import PropertyPopup
@@ -341,6 +341,33 @@ class CanvasTextItem(QGraphicsTextItem):
             self.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
             self.setFocus(Qt.FocusReason.MouseFocusReason)
         super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event):
+        """Handle Ctrl+C / Ctrl+V / Ctrl+X for text copy/paste when editing."""
+        mods = event.modifiers()
+        is_ctrl = mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier)
+        if is_ctrl and (self.textInteractionFlags() & Qt.TextInteractionFlag.TextEditorInteraction):
+            key = event.key()
+            cursor = self.textCursor()
+            clipboard = QApplication.clipboard()
+            if key == Qt.Key.Key_C:
+                if cursor.hasSelection():
+                    clipboard.setText(cursor.selectedText())
+                event.accept()
+                return
+            if key == Qt.Key.Key_X:
+                if cursor.hasSelection():
+                    clipboard.setText(cursor.selectedText())
+                    cursor.removeSelectedText()
+                event.accept()
+                return
+            if key == Qt.Key.Key_V:
+                text = clipboard.text()
+                if text:
+                    cursor.insertText(text)
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
 
 class DraggableElement(QGraphicsSvgItem):

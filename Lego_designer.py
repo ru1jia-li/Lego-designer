@@ -1451,6 +1451,13 @@ class LegoDesigner(QMainWindow):
                     "c": item.color.name(QColor.NameFormat.HexArgb),
                     "a": item.has_arrow,
                 })
+            elif isinstance(item, CanvasTextItem):
+                self._clipboard.append({
+                    "t": "text",
+                    "x": item.pos().x(),
+                    "y": item.pos().y(),
+                    "content": item.toPlainText() or "",
+                })
 
     def paste_items(self):
         if not self._clipboard:
@@ -1478,6 +1485,11 @@ class LegoDesigner(QMainWindow):
                 lp.setPen(QPen(lp.color, 7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
                 self.scene.addItem(lp)
                 lp.setSelected(True)
+            elif d["t"] == "text":
+                txt = CanvasTextItem(d.get("content") or "Text", self)
+                txt.setPos(d["x"] + offset, d["y"] + offset)
+                self.scene.addItem(txt)
+                txt.setSelected(True)
 
         self.save_undo_state()
 
@@ -2908,18 +2920,50 @@ class LegoDesigner(QMainWindow):
             return elems
 
         def _text_elements(item):
-            """Serialise a CanvasTextItem to SVG <text>."""
-            pos = item.pos()
-            content = item.toPlainText() or ""
-            text_el = _ET.Element(f"{{{SVG_NS}}}text", {
-                "x": f"{pos.x():.2f}",
-                "y": f"{pos.y():.2f}",
-                "fill": "#000000",
-                "font-family": "sans-serif",
-                "font-size": "12",
+            """Serialise a CanvasTextItem to SVG as a white rounded box + centered text."""
+            # Box: use the item's boundingRect mapped into scene coordinates
+            br = item.boundingRect()
+            top_left = item.mapToScene(br.topLeft())
+            rect_el = _ET.Element(f"{{{SVG_NS}}}rect", {
+                "x": f"{top_left.x():.2f}",
+                "y": f"{top_left.y():.2f}",
+                "width": f"{br.width():.2f}",
+                "height": f"{br.height():.2f}",
+                "rx": "2",
+                "ry": "2",
+                "fill": "#ffffff",
+                "stroke": "#000000",
+                "stroke-width": "3",
             })
-            text_el.text = content
-            return [text_el]
+
+            # Text: position inside box using document margin and item font
+            content = item.toPlainText() or ""
+            font = item.font()
+            font_pt = font.pointSize() if font.pointSize() > 0 else 20
+            margin = item.document().documentMargin()
+            # First line baseline: top of box + margin + ~80% of font size (typical ascent)
+            baseline_y = top_left.y() + margin + font_pt * 0.8
+            center_x = top_left.x() + br.width() / 2
+            text_el = _ET.Element(f"{{{SVG_NS}}}text", {
+                "x": f"{center_x:.2f}",
+                "y": f"{baseline_y:.2f}",
+                "text-anchor": "middle",
+                "fill": "#000000",
+                "font-family": font.family() or "sans-serif",
+                "font-size": str(font_pt),
+            })
+            lines = content.split("\n")
+            if not lines:
+                text_el.text = ""
+            else:
+                text_el.text = lines[0]
+                for line in lines[1:]:
+                    tspan = _ET.SubElement(text_el, f"{{{SVG_NS}}}tspan", {
+                        "x": f"{center_x:.2f}",
+                        "dy": "1.2em",
+                    })
+                    tspan.text = line
+            return [rect_el, text_el]
 
         # ── Recursive node serialiser ────────────────────────────────────────
         def _node_to_g(node):

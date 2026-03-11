@@ -166,7 +166,13 @@
             "r": 4.81
         }
     ],
-    "Thorlabs Isolator.svg": [],
+    "Thorlabs Isolator.svg": [
+        {
+            "x": 71.5441212871287,
+            "y": 100.80857142857143,
+            "r": 4.214972735438394
+        }
+    ],
     "LaserBoard.svg": [
         {
             "x": 279.5,
