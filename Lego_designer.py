@@ -1414,6 +1414,9 @@ class LegoDesigner(QMainWindow):
                 item.setPos(new_pos)
         finally:
             self._suppress_undo_save = False
+        for item in selected:
+            if isinstance(item, DraggableElement):
+                item.snap_to_grid()
         self.save_undo_state()
 
     def rotate_canvas_90(self):
