@@ -386,11 +386,6 @@ class DraggableElement(QGraphicsSvgItem):
         self.setTransformOriginPoint(self.boundingRect().center())
         self.setCacheMode(self.CacheMode.DeviceCoordinateCache)
 
-        #if self.holes: 
-        #    self.setTransformOriginPoint(self.holes[0]) 
-        #else: # fallback: rotate around center 
-        #    self.setTransformOriginPoint(self.boundingRect().center())
-
 
 
     def detect_holes_from_svg(self):

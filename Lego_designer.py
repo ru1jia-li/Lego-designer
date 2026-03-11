@@ -1372,12 +1372,8 @@ class LegoDesigner(QMainWindow):
             # Reference point per item: hole 0 if DraggableElement has holes, else center. Pivot = centroid of these.
             def get_ref(item):
                 if isinstance(item, DraggableElement):
-                    if item.holes:
-                        ref_local = item.holes[0]
-                        ref_scene = item.mapToScene(ref_local)
-                    else:
-                        ref_local = item.boundingRect().center()
-                        ref_scene = item.mapToScene(ref_local)
+                    ref_local = item.boundingRect().center()
+                    ref_scene = item.mapToScene(ref_local)
                     return ref_scene, ref_local
                 if isinstance(item, CanvasTextItem):
                     ref_local = item.boundingRect().center()
