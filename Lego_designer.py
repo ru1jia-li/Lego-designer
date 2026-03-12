@@ -1416,9 +1416,17 @@ class LegoDesigner(QMainWindow):
                 item.setPos(new_pos)
         finally:
             self._suppress_undo_save = False
-        for item in selected:
-            if isinstance(item, DraggableElement):
-                item.snap_to_grid()
+        # Snap one anchor (first DraggableElement) to grid, then displace all others by the same delta (like group drag).
+        anchor = next((i for i in selected if isinstance(i, DraggableElement)), None)
+        if anchor is not None:
+            old_pos = anchor.pos()
+            anchor.snap_to_grid()
+            delta = anchor.pos() - old_pos
+            for item in selected:
+                if item is anchor:
+                    continue
+                if isinstance(item, (DraggableElement, LaserPath, CanvasTextItem)):
+                    item.setPos(item.pos() + delta)
         self.save_undo_state()
 
     def rotate_canvas_90(self):
