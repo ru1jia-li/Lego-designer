@@ -104,6 +104,7 @@ class LegoDesigner(QMainWindow):
         self.breadboard_holes = []
         self.draw_mode = False
         self.eraser_mode = False
+        self.text_mode = False
         self.undo_stack = []
         self.redo_stack = []
         self.current_laser_color = QColor(255, 0, 0, 180)
@@ -384,10 +385,11 @@ class LegoDesigner(QMainWindow):
         self.btn_text.setObjectName("ToolBtn")
         self.btn_text.setFixedSize(50, 32)
         self.btn_text.setIconSize(QSize(22, 22))
-        self.btn_text.setToolTip("Add Text Box")
+        self.btn_text.setToolTip("Text Tool")
         self.btn_text.setToolTipDuration(0)
+        self.btn_text.setCheckable(True)
         self.btn_text.installEventFilter(self)
-        self.btn_text.clicked.connect(self.add_textbox)
+        self.btn_text.clicked.connect(self.toggle_text_mode)
         tl.addWidget(self.btn_text)
 
         tl.addStretch()
@@ -467,6 +469,7 @@ class LegoDesigner(QMainWindow):
         self.map_timer.start(33)
 
         self.autosave_dir = os.path.join(self.base_dir, "autosave")
+        self._autosave_dirty = False
         self._autosave_timer = QTimer()
         self._autosave_timer.timeout.connect(self._do_autosave)
         self._autosave_timer.start(120_000)  # 2 minutes
@@ -1598,8 +1601,13 @@ class LegoDesigner(QMainWindow):
         # Sync tree before snapshotting so layer structure is current
         self._rebuild_canvas_tree()
 
+        # Build items_list in tree order (same as layer_structure) so save/load
+        # order is deterministic and key matching is stable.
         items_list = []
-        for i in self.scene.items():
+        for node in self.canvas_state.all_item_nodes():
+            i = node.item
+            if i is None:
+                continue
             if isinstance(i, DraggableElement):
                 items_list.append({
                     "t": "i",
@@ -1640,6 +1648,7 @@ class LegoDesigner(QMainWindow):
         self.undo_stack.append(snapshot)
         if not initial:
             self.redo_stack.clear()
+            self._autosave_dirty = True
 
         # Skip panel refresh when called from _sync_tree_from_widget — the
         # widget already shows the correct post-drag state and a rebuild would
@@ -2231,15 +2240,19 @@ class LegoDesigner(QMainWindow):
     def toggle_select(self):
         self.draw_mode = False
         self.eraser_mode = False
+        self.text_mode = False
         self.btn_draw.setChecked(False)
         self.btn_eraser.setChecked(False)
+        self.btn_text.setChecked(False)
         self.btn_sel.setChecked(True)
         self.pen_options_box.hide()
 
     def toggle_draw(self):
         self.draw_mode = self.btn_draw.isChecked()
         self.eraser_mode = False
+        self.text_mode = False
         self.btn_eraser.setChecked(False)
+        self.btn_text.setChecked(False)
         self.btn_sel.setChecked(not self.draw_mode)
         self.pen_options_box.setVisible(self.draw_mode)
         self.reposition_overlays()
@@ -2247,13 +2260,26 @@ class LegoDesigner(QMainWindow):
     def toggle_eraser(self):
         self.eraser_mode = self.btn_eraser.isChecked()
         self.draw_mode = False
+        self.text_mode = False
         self.btn_draw.setChecked(False)
+        self.btn_text.setChecked(False)
         self.btn_sel.setChecked(not self.eraser_mode)
         # Keep pen_options_box visibility driven by selection (show when lasers selected)
         if not self.eraser_mode:
             self.pen_options_box.setVisible(False)
         else:
             self._on_selection_changed()
+
+    def toggle_text_mode(self):
+        self.text_mode = self.btn_text.isChecked()
+        if self.text_mode:
+            self.draw_mode = False
+            self.eraser_mode = False
+            self.btn_draw.setChecked(False)
+            self.btn_eraser.setChecked(False)
+            self.btn_sel.setChecked(False)
+        else:
+            self.btn_sel.setChecked(True)
 
     # =============================================================
     #   SCENE ITEM MANAGEMENT
@@ -2275,7 +2301,48 @@ class LegoDesigner(QMainWindow):
     # =============================================================
     def _on_selection_changed(self):
         selected = self.scene.selectedItems()
+
+        # --- Mode switching based on selection ---
+        # Suppress mode switching while a rubber-band (box) selection is in progress,
+        # so that multi-select keeps the mode it started in.
+        if not getattr(self, "_rubber_band_selecting", False):
+            prev_count = getattr(self, "_last_selection_count", 0)
+            cur_count = len(selected)
+
+            if cur_count == 0:
+                # Clicked on empty space / background → go to Select mode
+                self.toggle_select()
+            elif cur_count == 1 and prev_count <= 1:
+                # Single-item selection: switch mode based on item type.
+                # (If multiple are selected, keep the existing mode.)
+                item = selected[0]
+                if isinstance(item, LaserPath):
+                    # Laser item → laser/draw mode
+                    self.btn_draw.setChecked(True)
+                    self.toggle_draw()
+                elif isinstance(item, CanvasTextItem):
+                    # Text item → text mode
+                    self.btn_text.setChecked(True)
+                    self.toggle_text_mode()
+                else:
+                    # Elements / other items → select mode
+                    self.toggle_select()
+
+            self._last_selection_count = cur_count
+
         self.nudge_box.setVisible(len(selected) > 0)
+
+        # When multi-selecting in plain select mode, do not pop open
+        # the laser or text option dropdowns.
+        multi_in_select_mode = (
+            len(selected) > 1
+            and not getattr(self, "draw_mode", False)
+            and not getattr(self, "text_mode", False)
+        )
+        if multi_in_select_mode:
+            self.pen_options_box.setVisible(False)
+            self.text_options_box.setVisible(False)
+            return
 
         # Show pen_options_box whenever lasers are selected (not in draw mode,
         # where it's already shown for new-path settings).
@@ -2784,6 +2851,7 @@ class LegoDesigner(QMainWindow):
         self.undo_stack = []
         self.redo_stack = []
         self.save_undo_state()
+        self._autosave_dirty = False  # loaded state is not "dirty" until user edits
 
         if hasattr(self, '_layers_panel') and self._layers_panel.isVisible():
             self.refresh_layers_panel()
@@ -3198,6 +3266,7 @@ class LegoDesigner(QMainWindow):
             self._write_svg_to_path(path)
         except Exception:
             return
+        self._autosave_dirty = False
         # Cap at 10 files: list *.svg by mtime newest first, delete oldest if > 10
         try:
             files = [
@@ -3223,21 +3292,13 @@ class LegoDesigner(QMainWindow):
 
 
     def closeEvent(self, event):
-        reply = QMessageBox.question(
-            self, "Confirm Exit",
-            "Are you sure you want to close Lego Designer?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                self.scene.selectionChanged.disconnect()
-            except:
-                pass
-            event.accept()
-        else:
-            event.ignore()
+        if self._autosave_dirty:
+            self._do_autosave()
+        try:
+            self.scene.selectionChanged.disconnect()
+        except Exception:
+            pass
+        event.accept()
 
     # =============================================================
     #   Search

@@ -2,7 +2,7 @@ import math
 from PyQt6.QtWidgets import QGraphicsView
 from PyQt6.QtCore import Qt, QLineF, QRectF, QPointF
 from PyQt6.QtGui import QColor
-from elements import LaserPath
+from elements import LaserPath, CanvasTextItem
 
 class CustomGraphicsView(QGraphicsView):
     def __init__(self, scene, parent=None):
@@ -148,6 +148,18 @@ class CustomGraphicsView(QGraphicsView):
             self.scene().addItem(self._temp_line)
             return
 
+        # --- TEXT MODE — left-click creates a new text box at cursor ---
+        if getattr(self.main_app, "text_mode", False) and event.button() == Qt.MouseButton.LeftButton:
+            # Only create when clicking on empty space or breadboard, not on existing items
+            if item is None or item == getattr(self.main_app, "breadboard", None):
+                from elements import CanvasTextItem
+                scene_pt = self.mapToScene(event.position().toPoint())
+                text_item = CanvasTextItem("Text", self.main_app)
+                text_item.setPos(scene_pt)
+                self.scene().addItem(text_item)
+                self.main_app.save_undo_state()
+                return
+
         # --- PANNING ---
         if event.button() == Qt.MouseButton.LeftButton and (item is None or item == self.main_app.breadboard):
             self._is_panning = True
@@ -157,6 +169,9 @@ class CustomGraphicsView(QGraphicsView):
 
         # --- RUBBER BAND ---
         if event.button() == Qt.MouseButton.RightButton and (item is None or item == self.main_app.breadboard):
+            # Flag on main window so it can treat selection-changes during
+            # box-select differently (e.g. don't auto-switch modes mid-drag).
+            setattr(self.main_app, "_rubber_band_selecting", True)
             self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
 
         # --- DEFAULT (dragging items) ---
@@ -224,8 +239,8 @@ class CustomGraphicsView(QGraphicsView):
                     self.main_app.save_undo_state()
             self._temp_line = None
 
-        # When finishing a rubber-band drag, explicitly select every item whose bbox intersects the rect
-        # so that "everything in the box" is selected (Qt's default can miss some items).
+        # When finishing a rubber-band drag, explicitly select every item whose bbox intersects the rect.
+        # Filter by mode: draw mode → lasers only; text mode → text only; select mode → everything.
         if self.dragMode() == QGraphicsView.DragMode.RubberBandDrag:
             vp_rect = self.rubberBandRect()
             if not vp_rect.isEmpty():
@@ -233,11 +248,20 @@ class CustomGraphicsView(QGraphicsView):
                 br = self.mapToScene(vp_rect.bottomRight())
                 scene_rect = QRectF(tl, br).normalized()
                 self.scene().clearSelection()
+                draw_mode = getattr(self.main_app, "draw_mode", False)
+                text_mode = getattr(self.main_app, "text_mode", False)
                 for item in self.scene().items(scene_rect):
                     if item == getattr(self.main_app, "breadboard", None):
                         continue
-                    if item.flags() & item.GraphicsItemFlag.ItemIsSelectable:
-                        item.setSelected(True)
+                    if not (item.flags() & item.GraphicsItemFlag.ItemIsSelectable):
+                        continue
+                    if draw_mode and not isinstance(item, LaserPath):
+                        continue
+                    if text_mode and not isinstance(item, CanvasTextItem):
+                        continue
+                    item.setSelected(True)
+            # Rubber-band interaction is finished; allow normal mode switching again.
+            setattr(self.main_app, "_rubber_band_selecting", False)
 
         self._is_panning = self._is_drawing = self._is_erasing = False
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
