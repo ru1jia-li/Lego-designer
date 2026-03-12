@@ -1663,18 +1663,18 @@ class LegoDesigner(QMainWindow):
                 item = node.item
                 if isinstance(item, DraggableElement):
                     key = {"kt": "i", "p": item.file_path,
-                           "x": round(item.pos().x(), 1),
-                           "y": round(item.pos().y(), 1)}
+                           "x": round(item.pos().x(), 3),
+                           "y": round(item.pos().y(), 3)}
                 elif isinstance(item, LaserPath):
                     p1 = item.mapToScene(item.line().p1())
                     p2 = item.mapToScene(item.line().p2())
                     key = {"kt": "l",
-                           "x1": round(p1.x(), 1), "y1": round(p1.y(), 1),
-                           "x2": round(p2.x(), 1), "y2": round(p2.y(), 1)}
+                           "x1": round(p1.x(), 3), "y1": round(p1.y(), 3),
+                           "x2": round(p2.x(), 3), "y2": round(p2.y(), 3)}
                 elif isinstance(item, CanvasTextItem):
                     key = {"kt": "text",
-                           "x": round(item.pos().x(), 1),
-                           "y": round(item.pos().y(), 1),
+                           "x": round(item.pos().x(), 3),
+                           "y": round(item.pos().y(), 3),
                            "content": (item.toPlainText() or "")[:50]}
                 else:
                     return None
@@ -1781,20 +1781,21 @@ class LegoDesigner(QMainWindow):
         # Build lookup: key-tuple → qt_item
         def _make_key(d):
             if d["t"] == "i":
-                return ("i", d["p"], round(d["x"], 1), round(d["y"], 1))
+                return ("i", d["p"], round(d["x"], 3), round(d["y"], 3))
             elif d["t"] == "text":
-                return ("text", round(d["x"], 1), round(d["y"], 1), (d.get("content") or "")[:50])
+                return ("text", round(d["x"], 3), round(d["y"], 3), (d.get("content") or "")[:50])
             else:
-                return ("l", round(d["x1"], 1), round(d["y1"], 1),
-                               round(d["x2"], 1), round(d["y2"], 1))
+                return ("l", round(d["x1"], 3), round(d["y1"], 3),
+                               round(d["x2"], 3), round(d["y2"], 3))
 
         def _enc_key(k):
             if k["kt"] == "i":
-                return ("i", k["p"], k["x"], k["y"])
+                return ("i", k["p"], round(float(k["x"]), 3), round(float(k["y"]), 3))
             elif k["kt"] == "text":
-                return ("text", k["x"], k["y"], (k.get("content") or "")[:50])
+                return ("text", round(float(k["x"]), 3), round(float(k["y"]), 3), (k.get("content") or "")[:50])
             else:
-                return ("l", k["x1"], k["y1"], k["x2"], k["y2"])
+                return ("l", round(float(k["x1"]), 3), round(float(k["y1"]), 3),
+                        round(float(k["x2"]), 3), round(float(k["y2"]), 3))
 
         item_lookup = {_make_key(d): qt_item for d, qt_item in reconstructed}
 
@@ -2559,6 +2560,21 @@ class LegoDesigner(QMainWindow):
         if p:
             self._load_svg_file(p)
 
+    def _svg_root_dimensions(self, svg_root):
+        """Return (width, height) from an SVG root element (viewBox or width/height). None if unknown."""
+        vb = svg_root.get("viewBox")
+        if vb:
+            parts = vb.strip().replace(",", " ").split()
+            if len(parts) == 4:
+                return (float(parts[2]), float(parts[3]))
+        w, h = svg_root.get("width"), svg_root.get("height")
+        if w is not None and h is not None:
+            try:
+                return (float(str(w).replace("px", "").strip()), float(str(h).replace("px", "").strip()))
+            except (ValueError, TypeError):
+                pass
+        return None
+
     def _load_svg_file(self, path):
         """Parse an app-exported (or Illustrator-edited) SVG and reconstruct
         the full canvas state: layers, groups, DraggableElements, LaserPaths."""
@@ -2584,6 +2600,36 @@ class LegoDesigner(QMainWindow):
             return
 
         svg_root = tree.getroot()
+
+        # ── Detect breadboard from SVG viewBox and switch if we have a match ───
+        opened_dims = self._svg_root_dimensions(svg_root)
+        if opened_dims is not None:
+            ow, oh = opened_dims
+            breadboards_dir = os.path.join(self.base_dir, "Breadboards")
+            if os.path.isdir(breadboards_dir):
+                tol = 1.0  # allow 1 px tolerance
+                for f in sorted(os.listdir(breadboards_dir), key=lambda x: x.lower()):
+                    if not f.lower().endswith(".svg"):
+                        continue
+                    bp = os.path.join(breadboards_dir, f)
+                    try:
+                        t = _ET.parse(bp)
+                        br = t.getroot()
+                        bd = self._svg_root_dimensions(br)
+                        if bd is not None and abs(bd[0] - ow) <= tol and abs(bd[1] - oh) <= tol:
+                            self._breadboard_path = bp
+                            self.scene.removeItem(self.breadboard)
+                            self.breadboard = QGraphicsSvgItem(bp)
+                            self.breadboard.setZValue(-1)
+                            self.breadboard.setCacheMode(QGraphicsSvgItem.CacheMode.DeviceCoordinateCache)
+                            self.scene.addItem(self.breadboard)
+                            self.detect_breadboard_holes()
+                            self.view.breadboard_holes = self.breadboard_holes
+                            self.view.setSceneRect(self.breadboard.boundingRect())
+                            self._generate_fine_grid()
+                            break
+                    except Exception:
+                        continue
 
         # ── Clear scene ──────────────────────────────────────────────────────
         self._is_loading = True
