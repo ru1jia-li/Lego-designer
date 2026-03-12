@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QSpinBox, QDialog, QListWidget, QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt, QPointF, QRectF, QTimer, QLineF, QEvent, QSize
-from PyQt6.QtGui import QColor, QPen, QPixmap, QPainter, QFont, QIcon, QPolygonF, QTransform, QTextCharFormat, QBrush
+from PyQt6.QtGui import QColor, QPen, QPixmap, QPainter, QFont, QIcon, QPolygonF, QTransform, QTextCharFormat, QBrush, QImage
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtSvgWidgets import QGraphicsSvgItem
 
@@ -2721,13 +2721,40 @@ class LegoDesigner(QMainWindow):
     #   SVG EXPORT
     # =============================================================
     def export_svg(self):
-        """Export the canvas to an Illustrator-compatible SVG file."""
-        p, _ = QFileDialog.getSaveFileName(self, "Export SVG", "", "SVG (*.svg)")
+        """Export the canvas to SVG or PNG (format chosen in dialog)."""
+        p, selected = QFileDialog.getSaveFileName(
+            self, "Export", "", "SVG (*.svg);;PNG (*.png)"
+        )
         if not p:
             return
-        if not p.lower().endswith(".svg"):
-            p += ".svg"
-        self._write_svg_to_path(p)
+        if "PNG" in (selected or "") or p.lower().endswith(".png"):
+            if not p.lower().endswith(".png"):
+                p += ".png"
+            self._write_png_to_path(p)
+        else:
+            if not p.lower().endswith(".svg"):
+                p += ".svg"
+            self._write_svg_to_path(p)
+
+    def _write_png_to_path(self, path):
+        """Render the canvas to a PNG image (same area as SVG viewBox) at 2x resolution."""
+        bb_rect = self.breadboard.boundingRect()
+        scale = 2
+        w = max(1, int(bb_rect.width() * scale))
+        h = max(1, int(bb_rect.height() * scale))
+        image = QImage(w, h, QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.white)
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        self.scene.render(
+            painter,
+            QRectF(0, 0, w, h),
+            bb_rect,
+        )
+        painter.end()
+        if not image.save(path, "PNG"):
+            QMessageBox.warning(self, "Export PNG", f"Failed to save {path}")
 
     def _write_svg_to_path(self, path):
         """Build the full SVG tree and write it to path.
