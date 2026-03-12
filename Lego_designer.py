@@ -2315,17 +2315,14 @@ class LegoDesigner(QMainWindow):
             elif cur_count == 1 and prev_count <= 1:
                 # Single-item selection: switch mode based on item type.
                 # (If multiple are selected, keep the existing mode.)
+                # Laser paths do not auto-switch to draw mode; only text → text mode.
                 item = selected[0]
-                if isinstance(item, LaserPath):
-                    # Laser item → laser/draw mode
-                    self.btn_draw.setChecked(True)
-                    self.toggle_draw()
-                elif isinstance(item, CanvasTextItem):
+                if isinstance(item, CanvasTextItem):
                     # Text item → text mode
                     self.btn_text.setChecked(True)
                     self.toggle_text_mode()
                 else:
-                    # Elements / other items → select mode
+                    # Elements, laser paths, other → select mode
                     self.toggle_select()
 
             self._last_selection_count = cur_count
