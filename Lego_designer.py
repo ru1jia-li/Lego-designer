@@ -5,8 +5,6 @@ import json
 from datetime import datetime
 import xml.etree.ElementTree as ET
 
-import math
-
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QHBoxLayout,
     QFrame, QScrollArea, QLabel, QFileDialog, QCheckBox, QMessageBox,
@@ -1294,13 +1292,17 @@ class LegoDesigner(QMainWindow):
                 is_vertical   = abs(dx) < 0.5 and abs(dy) > 0.5
                 is_horizontal = abs(dy) < 0.5 and abs(dx) > 0.5
                 is_diagonal   = abs(dx) > 0.5 and abs(dy) > 0.5
+                # Minimum step so we don't pick a near-duplicate grid point (move_len would be <= 0.5 and skip)
+                MIN_CARDINAL_STEP = 5.0
 
                 for h in self.fine_grid_points:
                     if h == current:
                         continue
                     delta = h - current
                     dist = delta.manhattanLength()
-
+                    if is_vertical or is_horizontal:
+                        if dist < MIN_CARDINAL_STEP:
+                            continue
                     if is_vertical:
                         if abs(h.x() - current.x()) > ALIGN_TOL:
                             continue
