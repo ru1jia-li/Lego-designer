@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QSpinBox, QDialog, QListWidget, QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt, QPointF, QRectF, QTimer, QLineF, QEvent, QSize
-from PyQt6.QtGui import QColor, QPen, QPixmap, QPainter, QFont, QIcon, QPolygonF, QTransform, QTextCharFormat, QBrush, QImage
+from PyQt6.QtGui import QColor, QPen, QPixmap, QPainter, QFont, QIcon, QPolygonF, QTransform, QTextCharFormat, QBrush, QImage, QShortcut, QKeySequence
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtSvgWidgets import QGraphicsSvgItem
 
@@ -475,6 +475,8 @@ class LegoDesigner(QMainWindow):
 
         self.set_laser_color("#FF0000")
         self.save_undo_state(initial=True)
+        QShortcut(QKeySequence.StandardKey.ZoomIn, self, activated=lambda: self.view.scale(1.2, 1.2))
+        QShortcut(QKeySequence.StandardKey.ZoomOut, self, activated=lambda: self.view.scale(1 / 1.2, 1 / 1.2))
 
     # =============================================================
     #   OVERLAYS
@@ -2625,11 +2627,18 @@ class LegoDesigner(QMainWindow):
 
             # ── Text (CanvasTextItem) ────────────────────────────────────────
             if gid.startswith("text_"):
+                rect_el = xml_g.find(f"{{{SVG_NS}}}rect")
                 text_el = xml_g.find(f"{{{SVG_NS}}}text")
-                if text_el is not None:
-                    x = float(text_el.get("x", 0))
-                    y = float(text_el.get("y", 0))
-                    content = (text_el.text or "").strip()
+                if rect_el is not None and text_el is not None:
+                    # Use rect position (top-left of box), not text anchor, so position matches export
+                    x = float(rect_el.get("x", 0))
+                    y = float(rect_el.get("y", 0))
+                    # Collect first line from <text> and subsequent lines from <tspan> children
+                    parts = [(text_el.text or "").strip()]
+                    for child in text_el:
+                        if child.tag == f"{{{SVG_NS}}}tspan" or (child.tag and child.tag.split("}")[-1] == "tspan"):
+                            parts.append((child.text or "").strip())
+                    content = "\n".join(p for p in parts if p)
                     item = CanvasTextItem(content or "Text", self)
                     item.setPos(x, y)
                     self.scene.addItem(item)
