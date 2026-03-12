@@ -2635,53 +2635,33 @@ class LegoDesigner(QMainWindow):
                     _parse_node(child, layer)
                 return
 
-            # ── Text (CanvasTextItem) ────────────────────────────────────────
-            if gid.startswith("text_"):
-                rect_el = xml_g.find(f"{{{SVG_NS}}}rect")
-                text_el = xml_g.find(f"{{{SVG_NS}}}text")
-                if rect_el is not None and text_el is not None:
-                    # Use rect position (top-left of box), not text anchor, so position matches export
-                    x = float(rect_el.get("x", 0))
-                    y = float(rect_el.get("y", 0))
-                    # Collect first line from <text> and subsequent lines from <tspan> children
-                    parts = [(text_el.text or "").strip()]
-                    for child in text_el:
-                        if child.tag == f"{{{SVG_NS}}}tspan" or (child.tag and child.tag.split("}")[-1] == "tspan"):
-                            parts.append((child.text or "").strip())
-                    content = "\n".join(p for p in parts if p)
-                    item = CanvasTextItem(content or "Text", self)
-                    item.setPos(x, y)
-                    self.scene.addItem(item)
-                    node = CanvasNode("Text", ITEM, item=item, data={})
-                    canvas_parent.add_child(node)
-                return
+            # ── Detect by structure (works with both old ids elem_/laser_/text_ and new human-readable ids) ─
+            rect_el = xml_g.find(f"{{{SVG_NS}}}rect")
+            text_el = xml_g.find(f"{{{SVG_NS}}}text")
+            line_el = xml_g.find(f"{{{SVG_NS}}}line")
+            poly_el = xml_g.find(f"{{{SVG_NS}}}polygon")
+            has_svg_child = len(xml_g) > 0 and (xml_g[0].tag == f"{{{SVG_NS}}}svg" or xml_g[0].tag.endswith("}svg"))
 
-            # ── DraggableElement ─────────────────────────────────────────────
-            if gid.startswith("elem_"):
-                transform = xml_g.get("transform", "")
-                x, y, rot = _parse_transform(transform)
-                svg_name  = label   # e.g. "Lens_1in.svg"
-                svg_path  = icon_map.get(svg_name)
-                if not svg_path:
-                    return          # unknown element — skip gracefully
-                item = DraggableElement(svg_path, svg_name, self)
-                item.holes = self.load_hole_pattern(svg_path)
-                item.snapping_enabled = False
+            # ── Text (CanvasTextItem): <g> with <rect> + <text> ─────────────────
+            if rect_el is not None and text_el is not None:
+                # Use rect position (top-left of box), not text anchor, so position matches export
+                x = float(rect_el.get("x", 0))
+                y = float(rect_el.get("y", 0))
+                # Collect first line from <text> and subsequent lines from <tspan> children
+                parts = [(text_el.text or "").strip()]
+                for child in text_el:
+                    if child.tag == f"{{{SVG_NS}}}tspan" or (child.tag and child.tag.split("}")[-1] == "tspan"):
+                        parts.append((child.text or "").strip())
+                content = "\n".join(p for p in parts if p)
+                item = CanvasTextItem(content or "Text", self)
                 item.setPos(x, y)
-                item.setRotation(rot)
                 self.scene.addItem(item)
-                item.snapping_enabled = True
-                node = CanvasNode(svg_name, ITEM, item=item,
-                                  data={"path": svg_path})
-                canvas_parent.add_child(node)  # append: first processed = index 0 = top
+                node = CanvasNode("Text", ITEM, item=item, data={})
+                canvas_parent.add_child(node)
                 return
 
-            # ── LaserPath ────────────────────────────────────────────────────
-            if gid.startswith("laser_"):
-                line_el = xml_g.find(f"{{{SVG_NS}}}line")
-                poly_el = xml_g.find(f"{{{SVG_NS}}}polygon")
-                if line_el is None:
-                    return
+            # ── LaserPath: <g> with <line> (and optional <polygon> arrow) ───────
+            if line_el is not None:
                 x1 = float(line_el.get("x1", 0))
                 y1 = float(line_el.get("y1", 0))
                 x2 = float(line_el.get("x2", 0))
@@ -2699,8 +2679,34 @@ class LegoDesigner(QMainWindow):
                                Qt.PenCapStyle.RoundCap))
                 self.scene.addItem(lp)
                 node = CanvasNode("Laser Path", ITEM, item=lp, data={})
-                canvas_parent.add_child(node)  # append: first processed = index 0 = top
+                canvas_parent.add_child(node)
                 return
+
+            # ── DraggableElement: <g> with transform + <svg> child (viewBox) + label ─
+            transform = xml_g.get("transform", "")
+            if transform and has_svg_child and (label or gid):
+                if label and ".svg" in label:
+                    svg_name = label
+                else:
+                    # gid may have uniqueness suffix (e.g. Thorlabs0.5in_2) — strip it for lookup
+                    base = _re.sub(r"_(\d+)$", "", gid) if gid else ""
+                    svg_name = (base + ".svg") if base else ""
+                if not svg_name.endswith(".svg"):
+                    svg_name = svg_name + ".svg"
+                svg_path = icon_map.get(svg_name) or icon_map.get(os.path.basename(svg_name))
+                if svg_path:
+                    x, y, rot = _parse_transform(transform)
+                    item = DraggableElement(svg_path, svg_name, self)
+                    item.holes = self.load_hole_pattern(svg_path)
+                    item.snapping_enabled = False
+                    item.setPos(x, y)
+                    item.setRotation(rot)
+                    self.scene.addItem(item)
+                    item.snapping_enabled = True
+                    node = CanvasNode(svg_name, ITEM, item=item,
+                                      data={"path": svg_path})
+                    canvas_parent.add_child(node)
+                    return
 
             # ── Group (any other <g>) ─────────────────────────────────────────
             group_node = CanvasNode(label or gid, GROUP)
@@ -3007,6 +3013,21 @@ class LegoDesigner(QMainWindow):
                     tspan.text = line
             return [rect_el, text_el]
 
+        # ── Unique ID for Illustrator layer names (id = what shows in Layers panel) ─
+        _used_svg_ids = set()
+        def _layer_id(base):
+            """Sanitize base to a valid SVG id and make unique in this document."""
+            base = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(base).strip()).strip("_") or "element"
+            if base and not (base[0].isalpha() or base[0] == "_"):
+                base = "e_" + base
+            out = base
+            n = 2
+            while out in _used_svg_ids:
+                out = f"{base}_{n}"
+                n += 1
+            _used_svg_ids.add(out)
+            return out
+
         # ── Recursive node serialiser ────────────────────────────────────────
         def _node_to_g(node):
             """Convert a CanvasNode to an ET element (or list of elements)."""
@@ -3017,10 +3038,11 @@ class LegoDesigner(QMainWindow):
                 if item is None:
                     return []
                 if isinstance(item, DraggableElement):
-                    elem_prefix = f"elem_{id(item)}"
+                    elem_prefix = f"elem_{id(item)}"  # unique prefix for inlined defs/refs
+                    layer_name = os.path.splitext(node.name)[0] or os.path.splitext(os.path.basename(item.file_path))[0]
                     tf = _element_transform(item)
                     g = _ET.Element(f"{{{SVG_NS}}}g", {
-                        "id":          elem_prefix,
+                        "id":          _layer_id(layer_name),
                         f"{INK}label": node.name,
                         "transform":   tf,
                     })
@@ -3049,7 +3071,7 @@ class LegoDesigner(QMainWindow):
                     return [g]
                 elif isinstance(item, LaserPath):
                     g = _ET.Element(f"{{{SVG_NS}}}g", {
-                        "id":          f"laser_{id(item)}",
+                        "id":          _layer_id(node.name or "Laser"),
                         f"{INK}label": node.name,
                     })
                     for el in _laser_elements(item):
@@ -3057,8 +3079,8 @@ class LegoDesigner(QMainWindow):
                     return [g]
                 elif isinstance(item, CanvasTextItem):
                     g = _ET.Element(f"{{{SVG_NS}}}g", {
-                        "id":          f"text_{id(item)}",
-                        f"{INK}label": "Text",
+                        "id":          _layer_id(node.name or "Text"),
+                        f"{INK}label": node.name or "Text",
                     })
                     for el in _text_elements(item):
                         g.append(el)
@@ -3067,8 +3089,9 @@ class LegoDesigner(QMainWindow):
 
             # LAYER or GROUP
             is_layer = (node.node_type == _LAYER)
+            prefix = "layer_" if is_layer else "group_"
             attribs = {
-                "id":            f"layer_{node.name.replace(' ', '_')}_{id(node)}",
+                "id":            _layer_id(prefix + node.name),
                 f"{INK}label":   node.name,
             }
             if is_layer:
