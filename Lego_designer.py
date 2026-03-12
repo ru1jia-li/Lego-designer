@@ -871,8 +871,8 @@ class LegoDesigner(QMainWindow):
         """Position zoom controls (top-right) and minimap (bottom-right or bottom-left) over the view."""
         vw, vh = self.view.width(), self.view.height()
 
-        # Zoom / delete overlay: top-right with small margin
-        self.overlay.move(vw - 60, 20)
+        # Zoom / delete overlay: top-right with small margin (slightly left of edge)
+        self.overlay.move(vw - 70, 20)
 
         # Minimap container: bottom-right (default) or bottom-left with 20px margin
         cw, ch = self._minimap_container.width(), self._minimap_container.height()
