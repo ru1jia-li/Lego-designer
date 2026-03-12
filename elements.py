@@ -119,6 +119,7 @@ class LaserPath(QGraphicsLineItem):
         self.setPos(QPointF(cx, cy))
         self.setLine(QLineF(-length / 2, 0, length / 2, 0))
         self.setRotation(angle_deg)
+        self._position_handles()
 
     def boundingRect(self):
         """Include arrow in invalidation so moving the item clears the old arrow (no shadow)."""
