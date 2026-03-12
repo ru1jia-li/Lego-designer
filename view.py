@@ -96,6 +96,12 @@ class CustomGraphicsView(QGraphicsView):
                 else:
                     self.main_app.group_selected()
                 return
+            elif event.key() in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
+                self.scale(1.2, 1.2)
+                return
+            elif event.key() == Qt.Key.Key_Minus:
+                self.scale(1 / 1.2, 1 / 1.2)
+                return
 
         if event.key() == Qt.Key.Key_Space:
             self.main_app.toggle_select()
