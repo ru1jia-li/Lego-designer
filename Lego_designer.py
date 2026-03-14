@@ -2,6 +2,7 @@ import sys
 import os
 import re
 import json
+import base64
 from datetime import datetime
 import xml.etree.ElementTree as ET
 
@@ -12,7 +13,7 @@ from PyQt6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QAbstractItemView, QInputDialog, QMenu, QSizePolicy, QSplitter,
     QSpinBox, QDialog, QListWidget, QDialogButtonBox,
 )
-from PyQt6.QtCore import Qt, QPointF, QRectF, QTimer, QLineF, QEvent, QSize
+from PyQt6.QtCore import Qt, QPointF, QRectF, QTimer, QLineF, QEvent, QSize, QByteArray, QBuffer, QIODevice
 from PyQt6.QtGui import QColor, QPen, QPixmap, QPainter, QFont, QIcon, QPolygonF, QTransform, QTextCharFormat, QBrush, QImage, QShortcut, QKeySequence
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtSvgWidgets import QGraphicsSvgItem
@@ -2645,8 +2646,9 @@ class LegoDesigner(QMainWindow):
         import xml.etree.ElementTree as _ET
         import re as _re
 
-        SVG_NS = "http://www.w3.org/2000/svg"
-        INK_NS = "http://www.inkscape.org/namespaces/inkscape"
+        SVG_NS  = "http://www.w3.org/2000/svg"
+        XLINK_NS = "http://www.w3.org/1999/xlink"
+        INK_NS  = "http://www.inkscape.org/namespaces/inkscape"
 
         # ── Build icon lookup: basename → full path ──────────────────────────
         icon_map = {}
@@ -2751,6 +2753,9 @@ class LegoDesigner(QMainWindow):
             line_el = xml_g.find(f"{{{SVG_NS}}}line")
             poly_el = xml_g.find(f"{{{SVG_NS}}}polygon")
             has_svg_child = len(xml_g) > 0 and (xml_g[0].tag == f"{{{SVG_NS}}}svg" or xml_g[0].tag.endswith("}svg"))
+            use_el = xml_g.find(f"{{{SVG_NS}}}use") if len(xml_g) > 0 else None
+            use_href = (use_el.get("href") or use_el.get(f"{{{XLINK_NS}}}href", "")) if use_el is not None else ""
+            is_use_def = use_href.startswith("#def_") and use_el is not None and len(xml_g) == 1
 
             # ── Text (CanvasTextItem): <g> with <rect> + <text> ─────────────────
             if rect_el is not None and text_el is not None:
@@ -2792,18 +2797,36 @@ class LegoDesigner(QMainWindow):
                 canvas_parent.add_child(node)
                 return
 
-            # ── DraggableElement: <g> with transform + <svg> child (viewBox) + label ─
+            # ── DraggableElement: <g> with transform + either <use href="#def_..."> or <svg> child ─
             transform = xml_g.get("transform", "")
-            if transform and has_svg_child and (label or gid):
-                if label and ".svg" in label:
-                    svg_name = label
-                else:
-                    # gid may have uniqueness suffix (e.g. Thorlabs0.5in_2) — strip it for lookup
-                    base = _re.sub(r"_(\d+)$", "", gid) if gid else ""
-                    svg_name = (base + ".svg") if base else ""
-                if not svg_name.endswith(".svg"):
-                    svg_name = svg_name + ".svg"
-                svg_path = icon_map.get(svg_name) or icon_map.get(os.path.basename(svg_name))
+            svg_path = None
+            svg_name = None
+            if transform and (label or gid):
+                if is_use_def:
+                    # New format: defs+use — resolve def id to element file (e.g. def_Thorlabs0_5in)
+                    def_id = use_href.lstrip("#")
+                    def_base = def_id[5:] if def_id.startswith("def_") else def_id
+                    def_san = _re.sub(r"[^a-zA-Z0-9_.-]+", "_", def_base).strip("_") or "elem"
+                    if def_san and not (def_san[0].isalpha() or def_san[0] == "_"):
+                        def_san = "e_" + def_san
+                    for _k in icon_map:
+                        _base = os.path.splitext(os.path.basename(_k))[0]
+                        _san = _re.sub(r"[^a-zA-Z0-9_.-]+", "_", _base).strip("_") or "elem"
+                        if _san and not (_san[0].isalpha() or _san[0] == "_"):
+                            _san = "e_" + _san
+                        if _san == def_san:
+                            svg_path = icon_map[_k]
+                            svg_name = _k
+                            break
+                elif has_svg_child:
+                    if label and ".svg" in label:
+                        svg_name = label
+                    else:
+                        base = _re.sub(r"_(\d+)$", "", gid) if gid else ""
+                        svg_name = (base + ".svg") if base else ""
+                    if not svg_name.endswith(".svg"):
+                        svg_name = svg_name + ".svg"
+                    svg_path = icon_map.get(svg_name) or icon_map.get(os.path.basename(svg_name))
                 if svg_path:
                     x, y, rot = _parse_transform(transform)
                     item = DraggableElement(svg_path, svg_name, self)
@@ -2908,17 +2931,20 @@ class LegoDesigner(QMainWindow):
         import math as _math
 
         # ── Namespaces ──────────────────────────────────────────────────────
-        SVG_NS  = "http://www.w3.org/2000/svg"
-        INK_NS  = "http://www.inkscape.org/namespaces/inkscape"
-        SODI_NS = "http://sodipodi.sourceforge.net/DTD/sodipodi-0.0.dtd"
+        SVG_NS   = "http://www.w3.org/2000/svg"
+        XLINK_NS = "http://www.w3.org/1999/xlink"
+        INK_NS   = "http://www.inkscape.org/namespaces/inkscape"
+        SODI_NS  = "http://sodipodi.sourceforge.net/DTD/sodipodi-0.0.dtd"
 
         # Register so ET uses clean prefixes (no ns0/ns1 garbage)
         _ET.register_namespace("",         SVG_NS)
+        _ET.register_namespace("xlink",    XLINK_NS)
         _ET.register_namespace("inkscape", INK_NS)
         _ET.register_namespace("sodipodi", SODI_NS)
 
-        INK  = f"{{{INK_NS}}}"
-        SODI = f"{{{SODI_NS}}}"
+        INK   = f"{{{INK_NS}}}"
+        SODI  = f"{{{SODI_NS}}}"
+        XLINK = f"{{{XLINK_NS}}}"
 
         # ── viewBox from breadboard bounding rect ────────────────────────────
         bb_rect = self.breadboard.boundingRect()
@@ -3149,7 +3175,9 @@ class LegoDesigner(QMainWindow):
                 if item is None:
                     return []
                 if isinstance(item, DraggableElement):
-                    elem_prefix = f"elem_{id(item)}"  # unique prefix for inlined defs/refs
+                    # Full inline per instance + unique prefix so CSS/id refs never clash (Illustrator
+                    # shows all-black if <use> to defs loses stylesheet application).
+                    elem_prefix = f"elem_{id(item)}"
                     layer_name = os.path.splitext(node.name)[0] or os.path.splitext(os.path.basename(item.file_path))[0]
                     tf = _element_transform(item)
                     g = _ET.Element(f"{{{SVG_NS}}}g", {
@@ -3226,27 +3254,43 @@ class LegoDesigner(QMainWindow):
             for el in _node_to_g(layer_node):
                 layer_elements.append(el)
 
-        # ── Breadboard layer (bottom); locked so it stays locked in Illustrator ─
+        # ── Breadboard layer: one raster image (far fewer nodes → faster Illustrator open).
+        # Vector elements stay full SVG; breadboard is rarely edited in AI.
         bb_g = _ET.Element(f"{{{SVG_NS}}}g", {
-            "id":                f"layer_Breadboard",
+            "id":                "layer_Breadboard",
             f"{INK}label":       "Breadboard",
             f"{INK}groupmode":   "layer",
             f"{SODI}insensitive":"true",
         })
-        for child_el in _inline_svg_file(self._breadboard_path):
-            bb_g.append(child_el)
+        _max_px = 4096
+        _scale = min(1.0, _max_px / max(vw, vh, 1.0))
+        _iw = max(1, int(vw * _scale))
+        _ih = max(1, int(vh * _scale))
+        _bb_img = QImage(_iw, _ih, QImage.Format.Format_ARGB32)
+        _bb_img.fill(Qt.GlobalColor.white)
+        _bb_r = QSvgRenderer(self._breadboard_path)
+        _bb_p = QPainter(_bb_img)
+        _bb_r.render(_bb_p, QRectF(0, 0, _iw, _ih))
+        _bb_p.end()
+        _ba = QByteArray()
+        _buf = QBuffer(_ba)
+        _buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        _bb_img.save(_buf, "PNG")
+        _buf.close()
+        _b64 = base64.standard_b64encode(bytes(_ba)).decode("ascii")
+        _img_el = _ET.Element(f"{{{SVG_NS}}}image", {
+            "x": str(vx), "y": str(vy), "width": str(vw), "height": str(vh),
+            "preserveAspectRatio": "none",
+            f"{XLINK}href": f"data:image/png;base64,{_b64}",
+        })
+        bb_g.append(_img_el)
 
         # Append breadboard first (bottom), then user layers bottom→top
         root_svg.append(bb_g)
         for el in reversed(layer_elements):   # reversed → bottom layer first
             root_svg.append(el)
 
-        # ── Write file ───────────────────────────────────────────────────────
-        try:
-            _ET.indent(root_svg, space="  ")
-        except AttributeError:
-            pass  # Python < 3.9 fallback
-
+        # ── Write file (no pretty-print → smaller file, faster open in Illustrator)
         tree_out = _ET.ElementTree(root_svg)
         with open(path, "w", encoding="utf-8") as f:
             f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
