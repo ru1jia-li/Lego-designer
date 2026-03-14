@@ -321,6 +321,11 @@ class CanvasTextItem(QGraphicsTextItem):
         super().paint(painter, option, widget)
 
     def focusOutEvent(self, event):
+        # Drop highlight so leaving the box does not keep a visible text selection
+        c = self.textCursor()
+        if c.hasSelection():
+            c.clearSelection()
+            self.setTextCursor(c)
         super().focusOutEvent(event)
         self.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         self._fit_width_to_content()
@@ -329,6 +334,18 @@ class CanvasTextItem(QGraphicsTextItem):
             self.parent_app.save_undo_state()
         # Re-apply center after save_undo_state in case it or later Qt processing reset document alignment
         self._apply_center_alignment()
+
+    def itemChange(self, change, value):
+        if change == self.GraphicsItemChange.ItemSelectedHasChanged and not value:
+            if self.textInteractionFlags() & Qt.TextInteractionFlag.TextEditorInteraction:
+                c = self.textCursor()
+                if c.hasSelection():
+                    c.clearSelection()
+                    self.setTextCursor(c)
+                self.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+                self._fit_width_to_content()
+                self._apply_center_alignment()
+        return super().itemChange(change, value)
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)

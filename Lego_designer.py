@@ -2279,8 +2279,13 @@ class LegoDesigner(QMainWindow):
             self.btn_draw.setChecked(False)
             self.btn_eraser.setChecked(False)
             self.btn_sel.setChecked(False)
+            self.pen_options_box.setVisible(False)
+            self.text_options_box.setVisible(True)
+            self._position_text_options_for_selection()
         else:
             self.btn_sel.setChecked(True)
+            if not self._selected_text_items():
+                self.text_options_box.setVisible(False)
 
     # =============================================================
     #   SCENE ITEM MANAGEMENT
@@ -2339,7 +2344,12 @@ class LegoDesigner(QMainWindow):
         )
         if multi_in_select_mode:
             self.pen_options_box.setVisible(False)
-            self.text_options_box.setVisible(False)
+            # Keep text dropdown open in text mode so B/I/U still apply to new boxes
+            if not getattr(self, "text_mode", False):
+                self.text_options_box.setVisible(False)
+            else:
+                self.text_options_box.setVisible(True)
+                self._position_text_options_for_selection()
             return
 
         # Show pen_options_box whenever lasers are selected (not in draw mode,
@@ -2390,6 +2400,9 @@ class LegoDesigner(QMainWindow):
             self._block_text_controls = False
             self.text_options_box.setVisible(True)
             self._position_text_options_for_selection()
+        elif getattr(self, "text_mode", False):
+            self.text_options_box.setVisible(True)
+            self._position_text_options_for_selection()
         else:
             self.text_options_box.setVisible(False)
 
@@ -2405,6 +2418,19 @@ class LegoDesigner(QMainWindow):
 
     def _selected_text_items(self) -> list:
         return [i for i in self.scene.selectedItems() if isinstance(i, CanvasTextItem)]
+
+    def _default_text_font(self) -> QFont:
+        """Font from the text dropdown (size + B/I/U) — used for newly created text boxes."""
+        f = QFont("Sans Serif", max(6, self.text_font_size.value()))
+        f.setBold(self.text_bold_btn.isChecked())
+        f.setItalic(self.text_italic_btn.isChecked())
+        f.setUnderline(self.text_underline_btn.isChecked())
+        return f
+
+    def apply_default_text_font_to_new_item(self, item: CanvasTextItem):
+        item.setFont(self._default_text_font())
+        item._fit_width_to_content()
+        item._apply_center_alignment()
 
     def _scene_update_items(self, items, margin: float = 2.0):
         """Invalidate only the region covered by items instead of the whole scene."""
@@ -2598,6 +2624,7 @@ class LegoDesigner(QMainWindow):
             text_layer = self.canvas_state.add_layer_at("Text", 0)  # Text layer always on top
         center_pos = self.view.mapToScene(self.view.viewport().rect().center())
         item = CanvasTextItem("Text", self)
+        self.apply_default_text_font_to_new_item(item)
         item.setPos(center_pos)
         self.scene.addItem(item)
         item.setZValue(99999)

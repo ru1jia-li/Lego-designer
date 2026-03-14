@@ -155,6 +155,7 @@ class CustomGraphicsView(QGraphicsView):
                 from elements import CanvasTextItem
                 scene_pt = self.mapToScene(event.position().toPoint())
                 text_item = CanvasTextItem("Text", self.main_app)
+                self.main_app.apply_default_text_font_to_new_item(text_item)
                 text_item.setPos(scene_pt)
                 self.scene().addItem(text_item)
                 self.main_app.save_undo_state()
